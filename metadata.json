@@ -1,0 +1,8 @@
+{
+  "name": " Farmácia Online",
+  "description": "E-commerce farmacêutico de última geração com catálogo completo, PDV integrado e gestão de saúde.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}

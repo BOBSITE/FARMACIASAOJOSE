@@ -1,0 +1,69 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and loyalty information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "cpf": { "type": "string" },
+        "role": { "type": "string", "enum": ["CLIENT", "ADMIN", "FARMACEUTICO", "ATENDENTE"] },
+        "loyaltyPoints": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Pharmacy product details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "ean": { "type": "string" },
+        "activeIngredient": { "type": "string" },
+        "manufacturer": { "type": "string" },
+        "category": { "type": "string" },
+        "price": { "type": "number" },
+        "promoPrice": { "type": "number" },
+        "stock": { "type": "number" },
+        "images": { "type": "array", "items": { "type": "string" } },
+        "requiresPrescription": { "type": "boolean" },
+        "stripeType": { "type": "string", "enum": ["None", "Red", "Black"] },
+        "description": { "type": "string" }
+      },
+      "required": ["name", "price", "category"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer order details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "SHIPPED", "DELIVERED", "CANCELLED"] },
+        "total": { "type": "number" },
+        "items": { "type": "array" },
+        "paymentMethod": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "status", "total"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Product catalog"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer orders"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Farmácia São José - Sua saúde em primeiro lugar</title>
+    <link rel="icon" type="image/png" href="https://famaciasaojose.robert1588.workers.dev/favicon.png?v=2" />
+    <link rel="apple-touch-icon" href="https://famaciasaojose.robert1588.workers.dev/favicon.png?v=2" />
+    <script>
+      try {
+        const desc = Object.getOwnPropertyDescriptor(window, 'fetch');
+        if (desc && !desc.set && desc.configurable) {
+          const originalGet = desc.get;
+          let currentFetch = originalGet ? originalGet.call(window) : desc.value;
+          Object.defineProperty(window, 'fetch', {
+            configurable: true,
+            enumerable: true,
+            get() { return currentFetch; },
+            set(val) { currentFetch = val; }
+          });
+        }
+      } catch (e) {
+        console.error('Error redefining fetch:', e);
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
