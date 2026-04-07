@@ -111,6 +111,11 @@ service cloud.firestore {
       allow update: if isStaff();
     }
 
+    match /settings/{settingId} {
+      allow read: if (settingId == 'mercadopago_public') || isAdmin();
+      allow write: if isAdmin();
+    }
+
     match /{path=**} {
       allow read, write: if false;
     }

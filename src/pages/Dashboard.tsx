@@ -3,13 +3,14 @@ import { Routes, Route, Link, useLocation, useNavigate, Navigate } from 'react-r
 import { 
   LayoutDashboard, Package, ShoppingCart, Users, Settings as SettingsIcon, 
   TrendingUp, ArrowUpRight, ArrowDownRight, DollarSign, 
-  Plus, Search, Filter, MoreVertical, Edit, Trash2, X, QrCode, CreditCard, Printer 
+  Plus, Search, Filter, MoreVertical, Edit, Trash2, X, QrCode, CreditCard, Printer, 
+  CheckCircle2, XCircle, ExternalLink, RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { MOCK_PRODUCTS } from '../lib/mockData';
 import { useAuthStore } from '../lib/store';
-import { collection, getDocs, deleteDoc, doc, updateDoc, setDoc, orderBy, query } from 'firebase/firestore';
+import { collection, getDocs, deleteDoc, doc, updateDoc, setDoc, orderBy, query, getDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Product, Order, UserProfile } from '../types';
 import ProductModal from '../components/ProductModal';
@@ -827,6 +828,64 @@ function Products() {
 }
 
 function Settings() {
+  const [mpStatus, setMpStatus] = useState<{ connected: boolean; userId?: string; updatedAt?: string }>({ connected: false });
+  const [loading, setLoading] = useState(false);
+
+  const checkMpStatus = async () => {
+    try {
+      const docRef = doc(db, 'settings', 'mercadopago_private');
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setMpStatus({ 
+          connected: true, 
+          userId: data.userId, 
+          updatedAt: data.updatedAt 
+        });
+      }
+    } catch (error) {
+      console.error('Error checking MP status:', error);
+    }
+  };
+
+  useEffect(() => {
+    checkMpStatus();
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'MERCADOPAGO_AUTH_SUCCESS') {
+        checkMpStatus();
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  const handleConnect = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/auth/mercadopago/url');
+      if (!response.ok) throw new Error('Failed to get auth URL');
+      const { url } = await response.json();
+      
+      const width = 600;
+      const height = 700;
+      const left = window.screenX + (window.outerWidth - width) / 2;
+      const top = window.screenY + (window.outerHeight - height) / 2;
+      
+      window.open(
+        url,
+        'mercadopago_oauth',
+        `width=${width},height=${height},left=${left},top=${top}`
+      );
+    } catch (error) {
+      console.error('OAuth error:', error);
+      alert('Erro ao iniciar conexão com Mercado Pago. Verifique se o CLIENT_ID está configurado.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="max-w-4xl space-y-8">
       <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-gray-100 space-y-8">
@@ -859,6 +918,66 @@ function Settings() {
             Salvar Alterações
           </button>
         </div>
+      </div>
+
+      <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-gray-100 space-y-8">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-black text-gray-900 uppercase tracking-tighter">Integração Mercado Pago</h3>
+            <p className="text-xs font-bold text-gray-400">Conecte sua conta para receber pagamentos via Pix e Cartão</p>
+          </div>
+          <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center ${
+            mpStatus.connected ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-400'
+          }`}>
+            {mpStatus.connected ? (
+              <><CheckCircle2 className="w-3 h-3 mr-1" /> Conectado</>
+            ) : (
+              <><XCircle className="w-3 h-3 mr-1" /> Desconectado</>
+            )}
+          </div>
+        </div>
+
+        <div className="p-6 bg-gray-50 rounded-[2rem] border border-gray-100 flex flex-col md:flex-row items-center gap-6">
+          <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm border border-gray-100 shrink-0">
+            <CreditCard className="w-8 h-8 text-primary" />
+          </div>
+          <div className="flex-1 text-center md:text-left">
+            <h4 className="text-sm font-black text-gray-900 uppercase tracking-tight">
+              {mpStatus.connected ? 'Conta Vinculada' : 'Vincular Conta Mercado Pago'}
+            </h4>
+            <p className="text-xs font-bold text-gray-400 mt-1">
+              {mpStatus.connected 
+                ? `ID do Usuário: ${mpStatus.userId} • Atualizado em ${new Date(mpStatus.updatedAt!).toLocaleDateString()}`
+                : 'Você precisa conectar sua conta do Mercado Pago para processar pagamentos de forma segura.'}
+            </p>
+          </div>
+          <button 
+            onClick={handleConnect}
+            disabled={loading}
+            className={`flex items-center space-x-2 px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${
+              mpStatus.connected 
+                ? 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50' 
+                : 'bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/20'
+            }`}
+          >
+            {loading ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : mpStatus.connected ? (
+              <><RefreshCw className="w-3.5 h-3.5" /> Re-conectar</>
+            ) : (
+              <><ExternalLink className="w-3.5 h-3.5" /> Conectar Agora</>
+            )}
+          </button>
+        </div>
+
+        {mpStatus.connected && (
+          <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
+            <p className="text-[10px] font-bold text-emerald-700 leading-relaxed">
+              <strong>Pronto!</strong> Sua farmácia já está configurada para aceitar pagamentos. 
+              As credenciais de acesso são gerenciadas de forma segura e criptografada.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-gray-100 space-y-8">

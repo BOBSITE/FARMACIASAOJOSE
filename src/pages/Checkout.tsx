@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { Truck, ShieldCheck, ArrowRight, CheckCircle2, QrCode } from 'lucide-react';
 import { useCartStore, useAuthStore } from '../lib/store';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { addDoc, collection } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { initMercadoPago, Wallet } from '@mercadopago/sdk-react';
 
@@ -18,10 +18,32 @@ export default function Checkout() {
   const status = searchParams.get('status');
 
   useEffect(() => {
-    const publicKey = import.meta.env.VITE_MERCADOPAGO_PUBLIC_KEY;
-    if (publicKey) {
-      initMercadoPago(publicKey, { locale: 'pt-BR' });
-    }
+    const initializeMP = async () => {
+      try {
+        // Try to get public key from Firestore settings first
+        const docRef = doc(db, 'settings', 'mercadopago_public');
+        const docSnap = await getDoc(docRef);
+        
+        let publicKey = import.meta.env.VITE_MERCADOPAGO_PUBLIC_KEY;
+        
+        if (docSnap.exists()) {
+          publicKey = docSnap.data().publicKey || publicKey;
+        }
+
+        if (publicKey) {
+          initMercadoPago(publicKey, { locale: 'pt-BR' });
+        }
+      } catch (error) {
+        console.error('Error initializing Mercado Pago:', error);
+        // Fallback to env if firestore fails
+        const publicKey = import.meta.env.VITE_MERCADOPAGO_PUBLIC_KEY;
+        if (publicKey) {
+          initMercadoPago(publicKey, { locale: 'pt-BR' });
+        }
+      }
+    };
+
+    initializeMP();
   }, []);
 
   useEffect(() => {
@@ -43,7 +65,10 @@ export default function Checkout() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({ 
+          items,
+          payerEmail: user?.email 
+        }),
       });
       
       const data = await response.json();
@@ -195,8 +220,16 @@ export default function Checkout() {
                 {!loading && <ArrowRight className="w-5 h-5" />}
               </button>
             ) : (
-              <div className="mt-4">
-                <Wallet initialization={{ preferenceId }} />
+              <div className="mt-4 min-h-[100px]">
+                <Wallet 
+                  initialization={{ preferenceId }} 
+                  onReady={() => console.log('Mercado Pago Wallet ready')}
+                  onError={(error) => {
+                    console.error('Mercado Pago Error:', error);
+                    alert('Erro ao carregar o pagamento. Por favor, tente novamente.');
+                    setPreferenceId(null);
+                  }}
+                />
               </div>
             )}
           </div>
