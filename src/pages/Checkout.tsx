@@ -82,6 +82,12 @@ export default function Checkout() {
       return;
     }
 
+    const cleanZip = address.zipCode.replace(/\D/g, '');
+    if (!cleanZip.startsWith('616')) {
+      setError('No momento, realizamos entregas apenas para a cidade de Caucaia (Ceará).');
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -240,9 +246,15 @@ export default function Checkout() {
         <div className="lg:col-span-2 space-y-8">
           {/* Step 1: Shipping */}
           <section className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100 space-y-6">
-            <div className="flex items-center space-x-4">
-              <div className="w-10 h-10 bg-primary/10 text-primary rounded-xl flex items-center justify-center font-black">1</div>
-              <h2 className="text-xl font-display font-black text-gray-900">Endereço de Entrega</h2>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <div className="w-10 h-10 bg-primary/10 text-primary rounded-xl flex items-center justify-center font-black">1</div>
+                <h2 className="text-xl font-display font-black text-gray-900">Endereço de Entrega</h2>
+              </div>
+              <div className="bg-yellow-50 border border-yellow-100 rounded-lg px-3 py-1 flex items-center gap-2">
+                <AlertCircle className="w-3 h-3 text-yellow-600" />
+                <span className="text-[10px] sm:text-xs font-bold text-yellow-700 uppercase tracking-tighter">Entrega somente em Caucaia</span>
+              </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <input 
