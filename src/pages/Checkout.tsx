@@ -4,7 +4,7 @@ import { Truck, ShieldCheck, ArrowRight, CheckCircle2, CreditCard, QrCode, Alert
 import { useCartStore, useAuthStore } from '../lib/store';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { db } from '../lib/firebase';
-import { doc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 
 export default function Checkout() {
   const { items, clearCart } = useCartStore();
@@ -13,6 +13,14 @@ export default function Checkout() {
   const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [address, setAddress] = useState({
+    zipCode: '',
+    number: '',
+    street: '',
+    neighborhood: '',
+    city: '',
+    state: 'CE'
+  });
 
   const status = searchParams.get('status');
   const preference_id = searchParams.get('preference_id');
@@ -33,12 +41,47 @@ export default function Checkout() {
     handleSuccess();
   }, [status, preference_id, clearCart]);
 
+  useEffect(() => {
+    const fetchUserAddress = async () => {
+      if (!user?.uid) return;
+      try {
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          if (userData.address) {
+            setAddress({
+              zipCode: userData.address.zipCode || '',
+              number: userData.address.number || '',
+              street: userData.address.street || '',
+              neighborhood: userData.address.neighborhood || '',
+              city: userData.address.city || '',
+              state: userData.address.state || 'CE'
+            });
+          }
+        }
+      } catch (e) {
+        console.error("Error fetching user address:", e);
+      }
+    };
+    fetchUserAddress();
+  }, [user?.uid]);
+
   const subtotal = items.reduce((acc, item) => acc + item.price * item.quantity, 0);
-  const shipping = subtotal > 150 ? 0 : 15.00;
+  
+  const isFreeShippingArea = address.zipCode.replace(/\D/g, '').startsWith('61600') || 
+                            address.zipCode.replace(/\D/g, '').startsWith('61601');
+  
+  const shipping = (isFreeShippingArea && subtotal >= 100) ? 0 : 15.00;
   const total = subtotal + shipping;
 
   const handlePayment = async () => {
     if (items.length === 0) return;
+    
+    if (!address.zipCode || !address.street || !address.number || !address.neighborhood || !address.city) {
+      setError('Por favor, preencha todos os campos do endereço de entrega.');
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -68,6 +111,9 @@ export default function Checkout() {
           operatorName: user?.displayName || '',
           items,
           total,
+          subtotal,
+          shipping,
+          address,
           status: 'PENDING',
           paymentMethod: 'MERCADOPAGO',
           createdAt: new Date().toISOString()
@@ -199,11 +245,36 @@ export default function Checkout() {
               <h2 className="text-xl font-display font-black text-gray-900">Endereço de Entrega</h2>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <input placeholder="CEP" className="bg-gray-50 border-none rounded-2xl py-4 px-6 focus:ring-2 focus:ring-primary" />
-              <input placeholder="Número" className="bg-gray-50 border-none rounded-2xl py-4 px-6 focus:ring-2 focus:ring-primary" />
-              <input placeholder="Rua" className="sm:col-span-2 bg-gray-50 border-none rounded-2xl py-4 px-6 focus:ring-2 focus:ring-primary" />
-              <input placeholder="Bairro" className="bg-gray-50 border-none rounded-2xl py-4 px-6 focus:ring-2 focus:ring-primary" />
-              <input placeholder="Cidade" className="bg-gray-50 border-none rounded-2xl py-4 px-6 focus:ring-2 focus:ring-primary" />
+              <input 
+                placeholder="CEP" 
+                value={address.zipCode}
+                onChange={(e) => setAddress({ ...address, zipCode: e.target.value })}
+                className="bg-gray-50 border-none rounded-2xl py-4 px-6 focus:ring-2 focus:ring-primary" 
+              />
+              <input 
+                placeholder="Número" 
+                value={address.number}
+                onChange={(e) => setAddress({ ...address, number: e.target.value })}
+                className="bg-gray-50 border-none rounded-2xl py-4 px-6 focus:ring-2 focus:ring-primary" 
+              />
+              <input 
+                placeholder="Rua" 
+                value={address.street}
+                onChange={(e) => setAddress({ ...address, street: e.target.value })}
+                className="sm:col-span-2 bg-gray-50 border-none rounded-2xl py-4 px-6 focus:ring-2 focus:ring-primary" 
+              />
+              <input 
+                placeholder="Bairro" 
+                value={address.neighborhood}
+                onChange={(e) => setAddress({ ...address, neighborhood: e.target.value })}
+                className="bg-gray-50 border-none rounded-2xl py-4 px-6 focus:ring-2 focus:ring-primary" 
+              />
+              <input 
+                placeholder="Cidade" 
+                value={address.city}
+                onChange={(e) => setAddress({ ...address, city: e.target.value })}
+                className="bg-gray-50 border-none rounded-2xl py-4 px-6 focus:ring-2 focus:ring-primary" 
+              />
             </div>
           </section>
 
@@ -230,7 +301,7 @@ export default function Checkout() {
               </div>
               <div className="flex items-center gap-2">
                 <Truck className="w-4 h-4 text-blue-500" />
-                <span>Frete grátis acima de R$ 150</span>
+                <span>Frete grátis (Caucaia) acima de R$ 100</span>
               </div>
             </div>
           </section>
