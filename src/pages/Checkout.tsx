@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Truck, ShieldCheck, ArrowRight, CheckCircle2, QrCode } from 'lucide-react';
+import { Truck, ShieldCheck, ArrowRight, CheckCircle2, CreditCard, QrCode, AlertCircle, Loader2 } from 'lucide-react';
 import { useCartStore, useAuthStore } from '../lib/store';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { addDoc, collection, doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { initMercadoPago, Wallet } from '@mercadopago/sdk-react';
+import { doc, setDoc, updateDoc } from 'firebase/firestore';
 
 export default function Checkout() {
   const { items, clearCart } = useCartStore();
@@ -13,89 +12,87 @@ export default function Checkout() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(false);
-  const [preferenceId, setPreferenceId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const status = searchParams.get('status');
+  const preference_id = searchParams.get('preference_id');
 
   useEffect(() => {
-    const initializeMP = async () => {
-      try {
-        // Try to get public key from Firestore settings first
-        const docRef = doc(db, 'settings', 'mercadopago_public');
-        const docSnap = await getDoc(docRef);
-        
-        let publicKey = import.meta.env.VITE_MERCADOPAGO_PUBLIC_KEY;
-        
-        if (docSnap.exists()) {
-          publicKey = docSnap.data().publicKey || publicKey;
+    const handleSuccess = async () => {
+      if (status === 'success' || status === 'approved') {
+        if (preference_id) {
+          try {
+            await updateDoc(doc(db, 'orders', preference_id), { status: 'APPROVED' });
+          } catch (e) {
+            console.error("Failed to update order status", e);
+          }
         }
-
-        if (publicKey) {
-          initMercadoPago(publicKey, { locale: 'pt-BR' });
-        }
-      } catch (error) {
-        console.error('Error initializing Mercado Pago:', error);
-        // Fallback to env if firestore fails
-        const publicKey = import.meta.env.VITE_MERCADOPAGO_PUBLIC_KEY;
-        if (publicKey) {
-          initMercadoPago(publicKey, { locale: 'pt-BR' });
-        }
+        clearCart();
       }
     };
-
-    initializeMP();
-  }, []);
-
-  useEffect(() => {
-    if (status === 'success' || status === 'approved') {
-      clearCart();
-    }
-  }, [status, clearCart]);
+    handleSuccess();
+  }, [status, preference_id, clearCart]);
 
   const subtotal = items.reduce((acc, item) => acc + item.price * item.quantity, 0);
   const shipping = subtotal > 150 ? 0 : 15.00;
   const total = subtotal + shipping;
 
-  const handleCreatePreference = async () => {
+  const handlePayment = async () => {
     if (items.length === 0) return;
     setLoading(true);
+    setError(null);
+
     try {
       const response = await fetch('/api/create-preference', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           items,
-          payerEmail: user?.email 
+          payerEmail: user?.email,
+          userId: user?.uid
         }),
       });
       
       const data = await response.json();
-      if (data.id) {
-        setPreferenceId(data.id);
-        
-        const orderData = {
-          userId: user?.uid || 'anonymous',
-          status: 'PENDING',
-          total,
-          items,
-          paymentMethod: 'MERCADOPAGO',
-          preferenceId: data.id,
-          createdAt: new Date().toISOString(),
-        };
-        await addDoc(collection(db, 'orders'), orderData);
-      } else {
-        throw new Error(data.error || 'Failed to create preference');
+
+      if (!response.ok) {
+        throw new Error(data.message || data.error || 'Erro ao criar preferência');
       }
-    } catch (err) {
-      console.error(err);
-      alert('Erro ao conectar com o Mercado Pago. Verifique as chaves de API.');
-    } finally {
+
+      // Save order to Firestore as PENDING
+      try {
+        await setDoc(doc(db, 'orders', data.id), {
+          id: data.id,
+          userId: user?.uid || 'guest',
+          payerEmail: user?.email || '',
+          operatorName: user?.displayName || '',
+          items,
+          total,
+          status: 'PENDING',
+          paymentMethod: 'MERCADOPAGO',
+          createdAt: new Date().toISOString()
+        });
+      } catch (dbError) {
+        console.error('Failed to save order to fast database:', dbError);
+        // Continue anyway since we have the checkout URL
+      }
+
+      // Redirect directly to Mercado Pago checkout
+      const checkoutUrl = data.init_point || data.sandbox_init_point;
+      
+      if (checkoutUrl) {
+        window.location.href = checkoutUrl;
+      } else {
+        throw new Error('URL de checkout não recebida do Mercado Pago');
+      }
+    } catch (err: any) {
+      console.error('Payment error:', err);
+      setError(err.message || 'Erro ao processar pagamento. Tente novamente.');
       setLoading(false);
     }
   };
 
+  // Success screen
   if (status === 'success' || status === 'approved') {
     return (
       <div className="max-w-2xl mx-auto px-4 py-20 text-center space-y-8">
@@ -122,11 +119,12 @@ export default function Checkout() {
     );
   }
 
+  // Failure screen
   if (status === 'failure') {
     return (
       <div className="max-w-2xl mx-auto px-4 py-20 text-center space-y-8">
         <div className="w-24 h-24 bg-red-100 rounded-full flex items-center justify-center mx-auto text-red-500">
-          <ShieldCheck className="w-12 h-12" />
+          <AlertCircle className="w-12 h-12" />
         </div>
         <div className="space-y-4">
           <h1 className="text-3xl font-display font-black text-gray-900">Pagamento Recusado</h1>
@@ -135,10 +133,54 @@ export default function Checkout() {
           </p>
         </div>
         <button 
-          onClick={() => navigate('/checkout')}
+          onClick={() => { setError(null); navigate('/checkout'); }}
           className="bg-primary text-white font-bold px-8 py-4 rounded-full hover:bg-primary/90 transition-all"
         >
           Tentar Novamente
+        </button>
+      </div>
+    );
+  }
+
+  // Pending screen
+  if (status === 'pending') {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-20 text-center space-y-8">
+        <div className="w-24 h-24 bg-yellow-100 rounded-full flex items-center justify-center mx-auto text-yellow-600">
+          <QrCode className="w-12 h-12" />
+        </div>
+        <div className="space-y-4">
+          <h1 className="text-3xl font-display font-black text-gray-900">Pagamento Pendente</h1>
+          <p className="text-gray-500">
+            Seu pagamento está sendo processado. Você receberá uma confirmação por e-mail assim que for aprovado.
+          </p>
+        </div>
+        <button 
+          onClick={() => navigate('/')}
+          className="bg-primary text-white font-bold px-8 py-4 rounded-full hover:bg-primary/90 transition-all"
+        >
+          Voltar para a Loja
+        </button>
+      </div>
+    );
+  }
+
+  // Empty cart
+  if (items.length === 0) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-20 text-center space-y-8">
+        <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto text-gray-400">
+          <CreditCard className="w-12 h-12" />
+        </div>
+        <div className="space-y-4">
+          <h1 className="text-3xl font-display font-black text-gray-900">Carrinho Vazio</h1>
+          <p className="text-gray-500">Adicione produtos ao carrinho para finalizar a compra.</p>
+        </div>
+        <button 
+          onClick={() => navigate('/')}
+          className="bg-primary text-white font-bold px-8 py-4 rounded-full hover:bg-primary/90 transition-all"
+        >
+          Ver Produtos
         </button>
       </div>
     );
@@ -177,7 +219,18 @@ export default function Checkout() {
               </div>
               <div>
                 <h3 className="font-bold text-gray-900">Mercado Pago</h3>
-                <p className="text-sm text-gray-500">Pague com PIX, Cartão de Crédito ou Boleto de forma segura.</p>
+                <p className="text-sm text-gray-500">Pague com PIX, Cartão de Crédito ou Boleto. Você será redirecionado para o Mercado Pago.</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-6 text-xs text-gray-400 font-bold">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-green-500" />
+                <span>Pagamento 100% seguro</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Truck className="w-4 h-4 text-blue-500" />
+                <span>Frete grátis acima de R$ 150</span>
               </div>
             </div>
           </section>
@@ -210,28 +263,30 @@ export default function Checkout() {
               </div>
             </div>
             
-            {!preferenceId ? (
-              <button 
-                onClick={handleCreatePreference}
-                disabled={loading || items.length === 0}
-                className="w-full bg-blue-500 hover:bg-blue-600 text-white font-black py-4 rounded-2xl flex items-center justify-center space-x-3 transition-all shadow-xl shadow-blue-500/20 active:scale-95 disabled:opacity-50"
-              >
-                {loading ? 'Processando...' : 'Pagar com Mercado Pago'}
-                {!loading && <ArrowRight className="w-5 h-5" />}
-              </button>
-            ) : (
-              <div className="mt-4 min-h-[100px]">
-                <Wallet 
-                  initialization={{ preferenceId }} 
-                  onReady={() => console.log('Mercado Pago Wallet ready')}
-                  onError={(error) => {
-                    console.error('Mercado Pago Error:', error);
-                    alert('Erro ao carregar o pagamento. Por favor, tente novamente.');
-                    setPreferenceId(null);
-                  }}
-                />
+            {error && (
+              <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                <p className="text-sm text-red-700 font-bold">{error}</p>
               </div>
             )}
+
+            <button 
+              onClick={handlePayment}
+              disabled={loading || items.length === 0}
+              className="w-full bg-blue-500 hover:bg-blue-600 text-white font-black py-4 rounded-2xl flex items-center justify-center space-x-3 transition-all shadow-xl shadow-blue-500/20 active:scale-95 disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Redirecionando para Mercado Pago...</span>
+                </>
+              ) : (
+                <>
+                  <span>Pagar com Mercado Pago</span>
+                  <ArrowRight className="w-5 h-5" />
+                </>
+              )}
+            </button>
           </div>
         </div>
       </div>

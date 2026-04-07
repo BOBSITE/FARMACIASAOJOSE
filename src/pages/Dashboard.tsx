@@ -828,20 +828,16 @@ function Products() {
 }
 
 function Settings() {
-  const [mpStatus, setMpStatus] = useState<{ connected: boolean; userId?: string; updatedAt?: string }>({ connected: false });
+  const [mpStatus, setMpStatus] = useState<{ connected: boolean; source?: string; userId?: string; publicKey?: string; updatedAt?: string }>({ connected: false });
   const [loading, setLoading] = useState(false);
 
   const checkMpStatus = async () => {
     try {
-      const docRef = doc(db, 'settings', 'mercadopago_private');
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setMpStatus({ 
-          connected: true, 
-          userId: data.userId, 
-          updatedAt: data.updatedAt 
-        });
+      // Use server API to check status (works with env vars AND database)
+      const response = await fetch('/api/mercadopago/status');
+      if (response.ok) {
+        const data = await response.json();
+        setMpStatus(data);
       }
     } catch (error) {
       console.error('Error checking MP status:', error);
@@ -947,7 +943,9 @@ function Settings() {
             </h4>
             <p className="text-xs font-bold text-gray-400 mt-1">
               {mpStatus.connected 
-                ? `ID do Usuário: ${mpStatus.userId} • Atualizado em ${new Date(mpStatus.updatedAt!).toLocaleDateString()}`
+                ? mpStatus.source === 'environment'
+                  ? `Configurado via variáveis de ambiente • Public Key: ${mpStatus.publicKey}`
+                  : `ID do Usuário: ${mpStatus.userId} • Conectado via OAuth`
                 : 'Você precisa conectar sua conta do Mercado Pago para processar pagamentos de forma segura.'}
             </p>
           </div>

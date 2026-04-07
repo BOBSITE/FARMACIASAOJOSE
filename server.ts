@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import { MercadoPagoConfig, Preference } from 'mercadopago';
@@ -7,13 +8,42 @@ import { getFirestore } from 'firebase-admin/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 
 // Initialize Firebase Admin for server-side use (bypasses rules)
-if (!admin.apps.length) {
-  admin.initializeApp({
-    projectId: firebaseConfig.projectId,
-  });
+// Initialize Firebase Admin safely
+let db: any;
+try {
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      projectId: firebaseConfig.projectId,
+    });
+  }
+  db = getFirestore(firebaseConfig.firestoreDatabaseId || '(default)');
+} catch (error) {
+  console.warn("Firebase Admin SDK failed to initialize:", (error as any).message);
 }
 
-const db = getFirestore(firebaseConfig.firestoreDatabaseId || '(default)');
+// Global safe DB helper
+const safeDb = {
+  get: async (collection: string, docId: string) => {
+    if (!db) return null;
+    try {
+      const doc = await db.collection(collection).doc(docId).get();
+      return doc.exists ? doc.data() : null;
+    } catch (e) {
+      console.warn(`Firestore get failed (${collection}/${docId}):`, (e as any).message);
+      return null;
+    }
+  },
+  set: async (collection: string, docId: string, data: any) => {
+    if (!db) return false;
+    try {
+      await db.collection(collection).doc(docId).set(data, { merge: true });
+      return true;
+    } catch (e) {
+      console.warn(`Firestore set failed (${collection}/${docId}):`, (e as any).message);
+      return false;
+    }
+  }
+};
 
 function getOrigin(req: express.Request) {
   let origin = req.headers.origin as string;
@@ -43,6 +73,32 @@ async function startServer() {
   // API routes FIRST
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // Mercado Pago status check - works with env vars directly
+  app.get("/api/mercadopago/status", async (req, res) => {
+    const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+    const publicKey = process.env.VITE_MERCADOPAGO_PUBLIC_KEY;
+    
+    if (accessToken && publicKey) {
+      res.json({ 
+        connected: true, 
+        source: 'environment',
+        publicKey: publicKey.substring(0, 20) + '...',
+      });
+    } else {
+      // Try Firestore as fallback
+      const settings = await safeDb.get('settings', 'mercadopago_private');
+      if (settings?.accessToken) {
+        res.json({ 
+          connected: true, 
+          source: 'database',
+          userId: settings.userId,
+        });
+      } else {
+        res.json({ connected: false });
+      }
+    }
   });
 
   // Mercado Pago OAuth URL
@@ -90,19 +146,19 @@ async function startServer() {
       const data = await response.json();
 
       if (data.access_token) {
-        // Store public info
-        await db.collection('settings').doc('mercadopago_public').set({
+        // Store public info (safely)
+        await safeDb.set('settings', 'mercadopago_public', {
           publicKey: data.public_key,
           updatedAt: new Date().toISOString(),
-        }, { merge: true });
+        });
 
-        // Store private tokens using Admin SDK
-        await db.collection('settings').doc('mercadopago_private').set({
+        // Store private tokens (safely)
+        await safeDb.set('settings', 'mercadopago_private', {
           accessToken: data.access_token,
           userId: data.user_id,
           refreshToken: data.refresh_token,
           updatedAt: new Date().toISOString(),
-        }, { merge: true });
+        });
 
         // Send success message and close popup
         res.send(`
@@ -135,27 +191,33 @@ async function startServer() {
 
   app.post("/api/create-preference", async (req, res) => {
     try {
-      const { items, payerEmail } = req.body;
+      console.log("DEBUG: create-preference started");
+      const { items, payerEmail, userId } = req.body;
 
       if (!items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "Invalid items" });
       }
 
-      // Check for stored tokens first using Admin SDK
-      const settingsDoc = await db.collection('settings').doc('mercadopago_private').get();
+      console.log("DEBUG: checking settings via safeDb");
+      // Check for stored tokens first (safely)
+      const settingsData = await safeDb.get('settings', 'mercadopago_private');
+      console.log("DEBUG: settingsData retrieved:", !!settingsData);
+      
       let accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 
-      if (settingsDoc.exists) {
-        accessToken = settingsDoc.data()?.accessToken;
+      if (settingsData && settingsData.accessToken) {
+        accessToken = settingsData.accessToken;
       }
 
       if (!accessToken) {
-        throw new Error("MERCADOPAGO_ACCESS_TOKEN is not configured");
+        throw new Error("MERCADOPAGO_ACCESS_TOKEN is not configured - env or database");
       }
 
+      console.log("DEBUG: initializing Mercado Pago client");
       const client = new MercadoPagoConfig({ accessToken });
       const preference = new Preference(client);
 
+      console.log("DEBUG: mapping items");
       const mpItems = items.map((item: any) => ({
         id: item.id,
         title: item.name,
@@ -179,25 +241,81 @@ async function startServer() {
       }
 
       const origin = getOrigin(req);
+      const isHttps = origin.startsWith('https://');
 
-      const response = await preference.create({
+      console.log("DEBUG: creating preference via Mercado Pago SDK");
+      const preferenceData: any = {
         body: {
           items: mpItems,
-          payer: payerEmail ? { email: payerEmail } : undefined,
           back_urls: {
             success: `${origin}/checkout?status=success`,
             failure: `${origin}/checkout?status=failure`,
             pending: `${origin}/checkout?status=pending`,
           },
-          auto_return: "approved",
           statement_descriptor: "FARMACIA ONLINE",
         }
+      };
+
+      // Mercado Pago API rejects auto_return if back_urls.success is not HTTPS
+      if (isHttps) {
+        preferenceData.body.auto_return = "approved";
+      }
+
+      const response = await preference.create(preferenceData);
+      console.log("DEBUG: preference created successfully:", response.id);
+
+      // Create PENDING order in database using preference ID as order ID
+      await safeDb.set('orders', response.id, {
+        userId: userId || 'guest',
+        payerEmail: payerEmail || '',
+        items: items, // Save original items
+        total: subtotal + shipping,
+        status: 'PENDING',
+        paymentMethod: 'MERCADOPAGO',
+        createdAt: new Date().toISOString()
+      });
+      console.log(`DEBUG: Order ${response.id} stored in database as PENDING`);
+
+      res.json({ 
+        id: response.id, 
+        init_point: response.init_point,
+        sandbox_init_point: response.sandbox_init_point,
+      });
+    } catch (error: any) {
+      console.error("Error creating preference:", error);
+      res.status(500).json({ 
+        error: "Failed to create preference", 
+        message: error.message,
+        details: error.api_response?.body || error
+      });
+    }
+  });
+
+  app.post("/api/update-order-status", async (req, res) => {
+    try {
+      const { preference_id, status } = req.body;
+      
+      if (!preference_id || !status) {
+        return res.status(400).json({ error: "Missing preference_id or status" });
+      }
+
+      console.log(`DEBUG: Updating order ${preference_id} status to ${status}`);
+      
+      const orderData = await safeDb.get('orders', preference_id);
+      
+      if (!orderData) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      await safeDb.set('orders', preference_id, {
+        status: status,
+        updatedAt: new Date().toISOString()
       });
 
-      res.json({ id: response.id });
+      res.json({ success: true, message: "Order updated successfully" });
     } catch (error) {
-      console.error("Error creating preference:", error);
-      res.status(500).json({ error: "Failed to create preference" });
+      console.error("Order Update Error:", error);
+      res.status(500).json({ error: (error as any).message });
     }
   });
 
