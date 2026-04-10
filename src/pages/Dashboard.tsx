@@ -1229,6 +1229,95 @@ function Settings() {
                   </div>
 
                   {/* Configuração dos Botões */}
+                  <div className="sm:col-span-2 lg:col-span-3 pt-4 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+                    {/* Botão Primário */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] font-black text-gray-900 uppercase tracking-widest">Botão Principal</label>
+                        <div className="flex items-center gap-2">
+                          <input 
+                            type="checkbox"
+                            id={`primaryVisible-${index}`}
+                            checked={banner.primaryButtonVisible !== false}
+                            onChange={(e) => {
+                              const newBanners = [...(localSettings.banners || [])];
+                              newBanners[index] = { ...newBanners[index], primaryButtonVisible: e.target.checked };
+                              setLocalSettings({ ...localSettings, banners: newBanners });
+                            }}
+                            className="rounded border-gray-300 text-primary focus:ring-primary w-3 h-3"
+                          />
+                          <label htmlFor={`primaryVisible-${index}`} className="text-[8px] font-bold text-gray-400 uppercase">Visível</label>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <span className="text-[8px] font-bold text-gray-400 uppercase">Texto</span>
+                          <input 
+                            type="text"
+                            value={banner.primaryButtonText || ''}
+                            onChange={(e) => updateBanner(index, 'primaryButtonText', e.target.value)}
+                            className="w-full bg-white border border-gray-100 rounded-lg py-1.5 px-3 text-[10px] font-bold focus:ring-1 focus:ring-primary"
+                            placeholder="Ver Ofertas"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-[8px] font-bold text-gray-400 uppercase">Link</span>
+                          <input 
+                            type="text"
+                            value={banner.primaryButtonLink || ''}
+                            onChange={(e) => updateBanner(index, 'primaryButtonLink', e.target.value)}
+                            className="w-full bg-white border border-gray-100 rounded-lg py-1.5 px-3 text-[10px] font-bold focus:ring-1 focus:ring-primary"
+                            placeholder="/catalog"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Botão Secundário */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] font-black text-gray-900 uppercase tracking-widest">Botão Secundário</label>
+                        <div className="flex items-center gap-2">
+                          <input 
+                            type="checkbox"
+                            id={`secondaryVisible-${index}`}
+                            checked={banner.secondaryButtonVisible !== false}
+                            onChange={(e) => {
+                              const newBanners = [...(localSettings.banners || [])];
+                              newBanners[index] = { ...newBanners[index], secondaryButtonVisible: e.target.checked };
+                              setLocalSettings({ ...localSettings, banners: newBanners });
+                            }}
+                            className="rounded border-gray-300 text-primary focus:ring-primary w-3 h-3"
+                          />
+                          <label htmlFor={`secondaryVisible-${index}`} className="text-[8px] font-bold text-gray-400 uppercase">Visível</label>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <span className="text-[8px] font-bold text-gray-400 uppercase">Texto</span>
+                          <input 
+                            type="text"
+                            value={banner.secondaryButtonText || ''}
+                            onChange={(e) => updateBanner(index, 'secondaryButtonText', e.target.value)}
+                            className="w-full bg-white border border-gray-100 rounded-lg py-1.5 px-3 text-[10px] font-bold focus:ring-1 focus:ring-primary"
+                            placeholder="Cadastre-se"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-[8px] font-bold text-gray-400 uppercase">Link</span>
+                          <input 
+                            type="text"
+                            value={banner.secondaryButtonLink || ''}
+                            onChange={(e) => updateBanner(index, 'secondaryButtonLink', e.target.value)}
+                            className="w-full bg-white border border-gray-100 rounded-lg py-1.5 px-3 text-[10px] font-bold focus:ring-1 focus:ring-primary"
+                            placeholder="/register"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Configuração dos Botões */}
                   <div className="sm:col-span-3 pt-4 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
                     {/* Botão Primário */}
                     <div className="space-y-3">

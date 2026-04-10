@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { UserProfile } from '../types';
+import { UserProfile, CartItem } from '../types';
+import { supabase } from './supabase';
 
 interface AuthState {
   user: UserProfile | null;
@@ -22,8 +23,6 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
-
-import { CartItem } from '../types';
 
 interface CartState {
   items: CartItem[];
@@ -70,6 +69,12 @@ export interface Banner {
   image: string;
   color: string;
   badge: string;
+  primaryButtonText?: string;
+  primaryButtonLink?: string;
+  primaryButtonVisible?: boolean;
+  secondaryButtonText?: string;
+  secondaryButtonLink?: string;
+  secondaryButtonVisible?: boolean;
 }
 
 export interface StoreSettings {
@@ -95,9 +100,7 @@ interface SettingsState {
   saveSettings: (newSettings: StoreSettings) => Promise<void>;
 }
 
-import { supabase } from './supabase';
-
-export const DEFAULT_BANNERS = [
+export const DEFAULT_BANNERS: Banner[] = [
   {
     title: "Sua saúde em primeiro lugar 💚",
     subtitle: "Os melhores medicamentos e cuidados para você e sua família.",
