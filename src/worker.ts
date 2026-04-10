@@ -64,7 +64,14 @@ async function handleCreatePreference(request: Request, env: Env) {
   try {
     const { items, payerEmail, userId } = await request.json() as any;
 
-    const supabase = createClient(env.VITE_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY);
+    const supabaseUrl = env.VITE_SUPABASE_URL || (env as any).SUPABASE_URL;
+    const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY || (env as any).SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl) {
+      throw new Error("Configuração ausente: VITE_SUPABASE_URL não encontrada no painel da Cloudflare.");
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseKey);
     
     // Get MP Access Token
     let accessToken = env.MERCADOPAGO_ACCESS_TOKEN;
@@ -140,7 +147,11 @@ async function handleMpStatus(env: Env) {
     return new Response(JSON.stringify({ connected: true, source: 'env' }), { headers: { 'Content-Type': 'application/json' } });
   }
 
-  const supabase = createClient(env.VITE_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY);
+  const supabaseUrl = env.VITE_SUPABASE_URL || (env as any).SUPABASE_URL;
+  const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY || (env as any).SUPABASE_ANON_KEY;
+  if (!supabaseUrl) return new Response(JSON.stringify({ connected: false, error: "Missing Supabase URL" }), { headers: { 'Content-Type': 'application/json' } });
+
+  const supabase = createClient(supabaseUrl, supabaseKey);
   const { data } = await supabase.from('settings').select('value').eq('key', 'mercadopago_private').single();
 
   return new Response(JSON.stringify({ connected: !!data?.value?.access_token }), { headers: { 'Content-Type': 'application/json' } });
@@ -178,7 +189,11 @@ async function handleMpAuthCallback(request: Request, env: Env) {
   const data = await mpRes.json() as any;
   if (!data.access_token) return new Response("OAuth failed", { status: 500 });
 
-  const supabase = createClient(env.VITE_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY);
+  const supabaseUrl = env.VITE_SUPABASE_URL || (env as any).SUPABASE_URL;
+  const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY || (env as any).SUPABASE_ANON_KEY;
+  if (!supabaseUrl) throw new Error("Missing Supabase URL for OAuth");
+
+  const supabase = createClient(supabaseUrl, supabaseKey);
   await supabase.from('settings').upsert({ key: 'mercadopago_public', value: { public_key: data.public_key } });
   await supabase.from('settings').upsert({ key: 'mercadopago_private', value: { access_token: data.access_token, user_id: data.user_id } });
 
@@ -187,7 +202,11 @@ async function handleMpAuthCallback(request: Request, env: Env) {
 
 async function handleUpdateOrderStatus(request: Request, env: Env) {
   const { preference_id, status } = await request.json() as any;
-  const supabase = createClient(env.VITE_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY);
+  const supabaseUrl = env.VITE_SUPABASE_URL || (env as any).SUPABASE_URL;
+  const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY || (env as any).SUPABASE_ANON_KEY;
+  if (!supabaseUrl) throw new Error("Missing Supabase URL for order update");
+
+  const supabase = createClient(supabaseUrl, supabaseKey);
   await supabase.from('orders').update({ status }).eq('preference_id', preference_id);
   return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
 }
