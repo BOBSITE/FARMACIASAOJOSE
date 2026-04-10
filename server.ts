@@ -3,6 +3,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import { MercadoPagoConfig, Preference } from 'mercadopago';
 import path from 'path';
+import fs from 'fs';
 import { createClient } from '@supabase/supabase-js';
 
 // Initialize Supabase Client for server-side use
@@ -329,7 +330,6 @@ async function startServer() {
     }
   });
 
-  // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },

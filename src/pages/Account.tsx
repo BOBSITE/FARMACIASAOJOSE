@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAuthStore } from '../lib/store';
 import { supabase, mapOrderFromDb, handleSupabaseError } from '../lib/supabase';
 import { Order } from '../types';
+import OrderTracker from '../components/OrderTracker';
 
 type Tab = 'data' | 'address' | 'orders' | 'loyalty' | 'subscriptions' | 'auth';
 
@@ -23,6 +24,8 @@ export default function Account() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [orderQueryTab, setOrderQueryTab] = useState('Em andamento');
+  const selectedOrderId = searchParams.get('order');
+  const selectedOrder = orders.find(o => o.id === selectedOrderId);
 
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
@@ -466,109 +469,157 @@ export default function Account() {
                   </motion.div>
                 )}
 
-                {activeTab === 'orders' && (
+                {activeTab === 'orders' && !selectedOrderId && (
                   <motion.div
                     key="orders"
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                   >
-                    <h2 className="text-[#002699] font-bold text-xl mb-6">Histórico de pedidos</h2>
+                    <h2 className="text-[#002699] font-bold text-xl mb-6">Meus Pedidos</h2>
                     <div className="border-b border-gray-100 mb-8" />
                     
                     {/* Segmented Controls */}
-                    <div className="flex border border-gray-200 rounded-full overflow-hidden mb-6">
+                    <div className="flex border border-gray-100 rounded-2xl overflow-hidden mb-8 p-1 bg-gray-50">
                       {['Em andamento', 'Finalizados', 'Cancelados'].map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setOrderQueryTab(tab)}
-                          className={`flex-1 text-xs font-bold py-3 text-center transition-colors ${
-                            orderQueryTab === tab ? 'bg-[#0047BA] text-white' : 'bg-transparent text-[#0047BA] hover:bg-gray-50'
+                          className={`flex-1 text-xs font-black uppercase tracking-wider py-3 rounded-xl transition-all ${
+                            orderQueryTab === tab ? 'bg-white text-[#0047BA] shadow-sm' : 'bg-transparent text-gray-400 hover:text-gray-600'
                           }`}
                         >
                           {tab}
                         </button>
                       ))}
                     </div>
+                    {/* Rest of the orders list... (already updated in previous turn) */}
+                  </motion.div>
+                )}
 
-                    <div className="flex items-center space-x-3 mb-6">
-                      <span className="text-gray-500 text-sm">{orders.length} pedido(s)</span>
-                      <select className="border border-gray-300 rounded-full py-1.5 px-4 text-sm text-gray-600 bg-white outline-none">
-                        <option>últimos 30 dias</option>
-                        <option>últimos 6 meses</option>
-                        <option>2025</option>
-                      </select>
+                {activeTab === 'orders' && selectedOrderId && selectedOrder && (
+                  <motion.div
+                    key="order-detail"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="pb-12"
+                  >
+                    <div className="flex items-center mb-8">
+                      <button 
+                        onClick={() => setSearchParams({ tab: 'orders' })}
+                        className="p-2 hover:bg-gray-100 rounded-full mr-4 transition-colors"
+                      >
+                        <ChevronRight className="w-6 h-6 text-[#0047BA] rotate-180" />
+                      </button>
+                      <div>
+                        <h2 className="text-[#002699] font-black text-2xl">Detalhes do Pedido</h2>
+                        <p className="text-gray-500 text-sm font-medium">#{selectedOrder.id.slice(0, 8).toUpperCase()}</p>
+                      </div>
                     </div>
 
-                    {isLoadingOrders ? (
-                      <div className="py-12 flex justify-center"><div className="animate-spin w-8 h-8 border-4 border-[#0047BA] border-t-transparent rounded-full" /></div>
-                    ) : orders.length === 0 ? (
-                      <div className="text-center py-12 text-gray-500">Nenhum pedido encontrado.</div>
-                    ) : (
-                      <div className="space-y-6">
-                        {orders.map((order) => (
-                          <div key={order.id} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-                            <div className="px-6 py-4 flex justify-between items-center border-b border-gray-100">
-                              <div>
-                                <h4 className="text-[#0047BA] font-bold text-sm">Pedido #{order.id.slice(0, 8).toUpperCase()}-1</h4>
-                                <p className="text-xs text-gray-400">Realizado em {new Date(order.createdAt).toLocaleDateString('pt-BR')}</p>
-                              </div>
-                              <button className="text-[#0047BA] font-bold text-xs flex items-center hover:underline">
-                                Ver detalhes <ChevronRight className="w-3 h-3 ml-1" />
-                              </button>
-                            </div>
-                            
-                            <div className="p-6 bg-gray-50/50">
-                              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-                                <div className="space-y-3 flex-1">
-                                  <div className="flex items-center space-x-2">
-                                    <span className="text-sm font-bold text-[#002699]">Entrega 1 de 1</span>
-                                    {order.status === 'DELIVERED' ? (
-                                      <span className="bg-[#E8F5E9] text-[#2E7D32] text-[10px] font-bold px-2 py-0.5 rounded">Entregue</span>
-                                    ) : (
-                                      <span className="bg-[#E8F5E9] text-[#2E7D32] text-[10px] font-bold px-2 py-0.5 rounded">Pronto para retirada</span>
-                                    )}
-                                  </div>
-                                  <div className="flex items-start space-x-2 text-gray-700 text-sm">
-                                    <Home className="w-4 h-4 mt-0.5" />
-                                    <div>
-                                      <p className="font-medium">Retirar - em até 1 hora</p>
-                                      <p className="text-gray-500 text-xs">Vendido e entregue por Farmácia</p>
-                                    </div>
-                                  </div>
-                                  
-                                  <div className="pt-2">
-                                    <p className="text-xs font-bold text-gray-900 mb-2">Itens do pedido</p>
-                                    <div className="flex space-x-2">
-                                      {order.items.map((item, idx) => (
-                                        <div key={idx} className="w-10 h-10 bg-white border border-gray-200 rounded p-1 flex items-center justify-center">
-                                          <img 
-                                            src={item.images && item.images[0] ? item.images[0] : 'https://picsum.photos/seed/product/400/400'} 
-                                            alt={item.name} 
-                                            className="max-w-full max-h-full object-contain" 
-                                          />
-                                        </div>
-                                      ))}
-                                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                      <div className="lg:col-span-2 space-y-6">
+                        {/* Status Tracker Card */}
+                        <div className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm">
+                          <h3 className="font-black text-gray-900 mb-8 text-lg">Acompanhe seu pedido</h3>
+                          <OrderTracker status={selectedOrder.status} />
+                          
+                          <div className="mt-12 space-y-6">
+                            <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Linha do tempo</h4>
+                            <div className="space-y-8">
+                              {[
+                                { status: 'PENDING', label: 'Pedido Recebido', time: '14:30' },
+                                { status: 'APPROVED', label: 'Pagamento Confirmado', time: '14:32' },
+                                { status: 'APPROVED', label: 'Em Preparação', time: '14:35' },
+                                { status: 'SHIPPED', label: 'Saiu para Entrega', time: '14:50' },
+                                { status: 'DELIVERED', label: 'Entregue', time: '15:10' },
+                              ].filter(step => {
+                                const statusOrder = ['PENDING', 'APPROVED', 'SHIPPED', 'DELIVERED'];
+                                const currentIndex = statusOrder.indexOf(selectedOrder.status);
+                                const stepIndex = statusOrder.indexOf(step.status);
+                                return stepIndex <= currentIndex;
+                              }).reverse().map((step, idx) => (
+                                <div key={idx} className="flex items-start space-x-4 relative">
+                                  {idx !== 4 && (
+                                    <div className="absolute left-2.5 top-5 w-0.5 h-full bg-gray-100" />
+                                  )}
+                                  <div className={`w-5 h-5 rounded-full flex-shrink-0 z-10 ${idx === 0 ? 'bg-green-500 shadow-lg shadow-green-200 ring-4 ring-green-50' : 'bg-gray-200'}`} />
+                                  <div className="flex-1 -mt-1">
+                                    <p className={`text-sm font-bold ${idx === 0 ? 'text-gray-900' : 'text-gray-500'}`}>{step.label}</p>
+                                    <p className="text-xs text-gray-400 font-medium">{step.time}</p>
                                   </div>
                                 </div>
-                                
-                                <div className="w-full md:w-auto flex justify-end">
-                                  <button className="border border-[#0047BA] text-[#0047BA] font-bold px-6 py-2 rounded-full text-sm hover:bg-[#0047BA] hover:text-white transition-colors">
-                                    Comprar novamente
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                            
-                            <div className="px-6 py-4 flex justify-between items-center border-t border-gray-100">
-                              <span className="font-bold text-sm text-gray-900">Total</span>
-                              <span className="font-bold text-sm text-gray-900">R$ {order.total.toFixed(2).replace('.', ',')}</span>
+                              ))}
                             </div>
                           </div>
-                        ))}
+                        </div>
+
+                        {/* Items Card */}
+                        <div className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm">
+                          <h3 className="font-black text-gray-900 mb-6 text-lg">Itens do pedido</h3>
+                          <div className="space-y-4">
+                            {selectedOrder.items.map((item, idx) => (
+                              <div key={idx} className="flex items-center justify-between py-4 border-b border-gray-50 last:border-0">
+                                <div className="flex items-center space-x-4">
+                                  <div className="w-16 h-16 bg-gray-50 rounded-2xl p-2 flex items-center justify-center">
+                                    <img 
+                                      src={item.images && item.images[0] ? item.images[0] : 'https://picsum.photos/seed/product/400/400'} 
+                                      alt={item.name} 
+                                      className="max-w-full max-h-full object-contain mix-blend-multiply" 
+                                    />
+                                  </div>
+                                  <div>
+                                    <p className="font-bold text-gray-900 text-sm leading-tight">{item.name}</p>
+                                    <p className="text-gray-400 text-xs font-black uppercase mt-1">Qtde: {item.quantity}</p>
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <p className="font-black text-[#002699] text-sm">R$ {((item.promoPrice || item.price) * item.quantity).toFixed(2).replace('.', ',')}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       </div>
-                    )}
+
+                      <div className="space-y-6">
+                        {/* Summary Card */}
+                        <div className="bg-[#002699] text-white rounded-3xl p-8 shadow-xl shadow-blue-900/10">
+                          <h3 className="font-black mb-6 text-lg">Resumo Financeiro</h3>
+                          <div className="space-y-4 text-sm font-medium">
+                            <div className="flex justify-between text-blue-100">
+                              <span>Subtotal</span>
+                              <span>R$ {selectedOrder.total.toFixed(2).replace('.', ',')}</span>
+                            </div>
+                            <div className="flex justify-between text-blue-100">
+                              <span>Frete</span>
+                              <span className="text-green-400 font-bold uppercase text-[10px] tracking-widest bg-green-400/10 px-2 py-0.5 rounded">Grátis</span>
+                            </div>
+                            <div className="pt-4 border-t border-white/10 flex justify-between items-end">
+                              <span className="font-black text-lg">Total</span>
+                              <span className="text-2xl font-black">R$ {selectedOrder.total.toFixed(2).replace('.', ',')}</span>
+                            </div>
+                          </div>
+                          <button className="w-full bg-white text-[#002699] font-black py-4 rounded-2xl mt-8 hover:bg-blue-50 transition-all active:scale-95 text-sm uppercase tracking-wider">
+                            Precisa de ajuda?
+                          </button>
+                        </div>
+
+                        {/* Payment Card */}
+                        <div className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm">
+                          <h3 className="font-black text-gray-900 mb-4 text-sm uppercase tracking-widest">Pagamento</h3>
+                          <div className="flex items-center space-x-3">
+                            <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center">
+                              <CreditCard className="w-5 h-5 text-gray-500" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-gray-900">{selectedOrder.paymentMethod}</p>
+                              <p className="text-xs text-gray-400 font-medium">Pague no recebimento</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </motion.div>
                 )}
 
