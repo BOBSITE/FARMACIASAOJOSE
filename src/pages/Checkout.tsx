@@ -130,6 +130,7 @@ export default function Checkout() {
             name: item.name,
             quantity: item.quantity,
             price: item.price,
+            images: item.images,
             selectedVariations: item.selectedVariations || {}
           })),
           total,
@@ -174,12 +175,20 @@ export default function Checkout() {
             Seu pedido foi recebido e o pagamento foi confirmado. Você receberá atualizações por e-mail.
           </p>
         </div>
-        <button 
-          onClick={() => navigate('/')}
-          className="bg-primary text-white font-bold px-8 py-4 rounded-full hover:bg-primary/90 transition-all"
-        >
-          Voltar para a Loja
-        </button>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+          <button 
+            onClick={() => navigate('/')}
+            className="bg-primary text-white font-bold px-8 py-4 rounded-full hover:bg-primary/90 transition-all w-full sm:w-auto"
+          >
+            Voltar para a Loja
+          </button>
+          <button 
+            onClick={() => navigate('/account?tab=orders')}
+            className="border-2 border-primary text-primary font-bold px-8 py-4 rounded-full hover:bg-primary/5 transition-all w-full sm:w-auto"
+          >
+            Meus Pedidos
+          </button>
+        </div>
       </div>
     );
   }
@@ -220,12 +229,20 @@ export default function Checkout() {
             Seu pagamento está sendo processado. Você receberá uma confirmação por e-mail assim que for aprovado.
           </p>
         </div>
-        <button 
-          onClick={() => navigate('/')}
-          className="bg-primary text-white font-bold px-8 py-4 rounded-full hover:bg-primary/90 transition-all"
-        >
-          Voltar para a Loja
-        </button>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+          <button 
+            onClick={() => navigate('/')}
+            className="bg-primary text-white font-bold px-8 py-4 rounded-full hover:bg-primary/90 transition-all w-full sm:w-auto"
+          >
+            Voltar para a Loja
+          </button>
+          <button 
+            onClick={() => navigate('/account?tab=orders')}
+            className="border-2 border-primary text-primary font-bold px-8 py-4 rounded-full hover:bg-primary/5 transition-all w-full sm:w-auto"
+          >
+            Meus Pedidos
+          </button>
+        </div>
       </div>
     );
   }

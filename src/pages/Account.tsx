@@ -542,7 +542,11 @@ export default function Account() {
                                     <div className="flex space-x-2">
                                       {order.items.map((item, idx) => (
                                         <div key={idx} className="w-10 h-10 bg-white border border-gray-200 rounded p-1 flex items-center justify-center">
-                                          <img src={item.images[0]} alt="" className="max-w-full max-h-full object-contain" />
+                                          <img 
+                                            src={item.images && item.images[0] ? item.images[0] : 'https://picsum.photos/seed/product/400/400'} 
+                                            alt={item.name} 
+                                            className="max-w-full max-h-full object-contain" 
+                                          />
                                         </div>
                                       ))}
                                     </div>
