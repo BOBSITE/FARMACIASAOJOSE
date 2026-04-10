@@ -3,8 +3,7 @@ import { motion } from 'motion/react';
 import { Truck, ShieldCheck, ArrowRight, CheckCircle2, CreditCard, QrCode, AlertCircle, Loader2 } from 'lucide-react';
 import { useCartStore, useAuthStore } from '../lib/store';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { db } from '../lib/firebase';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { supabase } from '../lib/supabase';
 
 export default function Checkout() {
   const { items, clearCart } = useCartStore();
@@ -21,6 +20,7 @@ export default function Checkout() {
     city: '',
     state: 'CE'
   });
+  const [isCheckingCep, setIsCheckingCep] = useState(false);
 
   const status = searchParams.get('status');
   const preference_id = searchParams.get('preference_id');
@@ -30,7 +30,7 @@ export default function Checkout() {
       if (status === 'success' || status === 'approved') {
         if (preference_id) {
           try {
-            await updateDoc(doc(db, 'orders', preference_id), { status: 'APPROVED' });
+            await supabase.from('orders').update({ status: 'APPROVED' }).eq('id', preference_id);
           } catch (e) {
             console.error("Failed to update order status", e);
           }
@@ -45,19 +45,17 @@ export default function Checkout() {
     const fetchUserAddress = async () => {
       if (!user?.uid) return;
       try {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          if (userData.address) {
-            setAddress({
-              zipCode: userData.address.zipCode || '',
-              number: userData.address.number || '',
-              street: userData.address.street || '',
-              neighborhood: userData.address.neighborhood || '',
-              city: userData.address.city || '',
-              state: userData.address.state || 'CE'
-            });
-          }
+        const { data, error } = await supabase.from('users').select('address').eq('id', user.uid).single();
+        if (data?.address) {
+          const addr = data.address as any;
+          setAddress({
+            zipCode: addr.zipCode || '',
+            number: addr.number || '',
+            street: addr.street || '',
+            neighborhood: addr.neighborhood || '',
+            city: addr.city || '',
+            state: addr.state || 'CE'
+          });
         }
       } catch (e) {
         console.error("Error fetching user address:", e);
@@ -96,40 +94,55 @@ export default function Checkout() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          items,
+          items: items.map(item => ({
+            id: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            price: item.price,
+            selectedVariations: item.selectedVariations || {}
+          })),
           payerEmail: user?.email,
           userId: user?.uid
         }),
       });
+
+      if (!response.ok) {
+        let errorMsg = 'Erro ao criar preferência';
+        try {
+          const errData = await response.json();
+          errorMsg = errData.message || errData.error || errorMsg;
+        } catch {
+          errorMsg = `Erro do servidor (${response.status}). Tente novamente.`;
+        }
+        throw new Error(errorMsg);
+      }
       
       const data = await response.json();
 
-      if (!response.ok) {
-        throw new Error(data.message || data.error || 'Erro ao criar preferência');
-      }
-
-      // Save order to Firestore as PENDING
+      // Save order from frontend (authenticated user passes RLS)
       try {
-        await setDoc(doc(db, 'orders', data.id), {
-          id: data.id,
-          userId: user?.uid || 'guest',
-          payerEmail: user?.email || '',
-          operatorName: user?.displayName || '',
-          items,
+        await supabase.from('orders').insert({
+          preference_id: data.id,
+          user_id: user?.uid || null,
+          operator_name: user?.displayName || '',
+          items: items.map(item => ({
+            id: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            price: item.price,
+            selectedVariations: item.selectedVariations || {}
+          })),
           total,
-          subtotal,
-          shipping,
-          address,
           status: 'PENDING',
-          paymentMethod: 'MERCADOPAGO',
-          createdAt: new Date().toISOString()
+          payment_method: 'MERCADOPAGO',
+          amount_paid: 0,
+          change: 0,
         });
       } catch (dbError) {
-        console.error('Failed to save order to fast database:', dbError);
-        // Continue anyway since we have the checkout URL
+        console.error('Failed to save order:', dbError);
       }
 
-      // Redirect directly to Mercado Pago checkout
+      // Redirect to Mercado Pago checkout
       const checkoutUrl = data.init_point || data.sandbox_init_point;
       
       if (checkoutUrl) {
@@ -238,6 +251,38 @@ export default function Checkout() {
     );
   }
 
+  const handleCepChange = async (value: string) => {
+    const cleanValue = value.replace(/\D/g, '').slice(0, 8);
+    let formattedValue = cleanValue;
+    if (cleanValue.length > 5) {
+      formattedValue = `${cleanValue.slice(0, 5)}-${cleanValue.slice(5)}`;
+    }
+    
+    setAddress(prev => ({ ...prev, zipCode: formattedValue }));
+
+    if (cleanValue.length === 8) {
+      setIsCheckingCep(true);
+      try {
+        const response = await fetch(`https://viacep.com.br/ws/${cleanValue}/json/`);
+        const data = await response.json();
+        
+        if (!data.erro) {
+          setAddress(prev => ({
+            ...prev,
+            street: data.logradouro || prev.street,
+            neighborhood: data.bairro || prev.neighborhood,
+            city: data.localidade || prev.city,
+            state: data.uf || prev.state
+          }));
+        }
+      } catch (err) {
+        console.error("Erro ao buscar CEP", err);
+      } finally {
+        setIsCheckingCep(false);
+      }
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
       <h1 className="text-3xl font-display font-black text-gray-900 mb-12">Finalizar Pedido</h1>
@@ -257,12 +302,18 @@ export default function Checkout() {
               </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <input 
-                placeholder="CEP" 
-                value={address.zipCode}
-                onChange={(e) => setAddress({ ...address, zipCode: e.target.value })}
-                className="bg-gray-50 border-none rounded-2xl py-4 px-6 focus:ring-2 focus:ring-primary" 
-              />
+              <div className="relative">
+                <input 
+                  placeholder="CEP" 
+                  value={address.zipCode}
+                  onChange={(e) => handleCepChange(e.target.value)}
+                  maxLength={9}
+                  className="w-full bg-gray-50 border-none rounded-2xl py-4 px-6 focus:ring-2 focus:ring-primary" 
+                />
+                {isCheckingCep && (
+                  <Loader2 className="w-5 h-5 text-primary animate-spin absolute right-4 top-1/2 -translate-y-1/2" />
+                )}
+              </div>
               <input 
                 placeholder="Número" 
                 value={address.number}
@@ -325,9 +376,18 @@ export default function Checkout() {
             <h2 className="text-xl font-display font-black text-gray-900">Resumo</h2>
             <div className="space-y-4 max-h-48 overflow-y-auto pr-2">
               {items.map(item => (
-                <div key={item.id} className="flex justify-between text-sm">
-                  <span className="text-gray-500 truncate max-w-[150px]">{item.quantity}x {item.name}</span>
-                  <span className="font-bold text-gray-900">R$ {(item.price * item.quantity).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                <div key={item.id} className="space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500 truncate max-w-[150px]">{item.quantity}x {item.name}</span>
+                    <span className="font-bold text-gray-900">R$ {(item.price * item.quantity).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  {item.selectedVariations && Object.keys(item.selectedVariations).length > 0 && (
+                    <div className="flex flex-wrap gap-x-2 text-[10px] text-gray-400 font-bold uppercase">
+                      {Object.entries(item.selectedVariations).map(([name, value]) => (
+                        <span key={name}>{name}: {value}</span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

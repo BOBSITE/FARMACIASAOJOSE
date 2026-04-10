@@ -2,8 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ShoppingCart, User, Search, Menu, LogOut, LayoutDashboard, Monitor, ChevronDown, Plus, ShoppingBag } from 'lucide-react';
 import { useAuthStore, useCartStore } from '../lib/store';
-import { auth } from '../lib/firebase';
-import { signOut } from 'firebase/auth';
+import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function Navbar() {
@@ -16,8 +15,50 @@ export default function Navbar() {
 
   const cartCount = items.reduce((acc, item) => acc + item.quantity, 0);
 
+  const [latestOrder, setLatestOrder] = useState<{ id: string; status: string } | null>(null);
+
+  useEffect(() => {
+    if (user?.uid) {
+      const fetchLatestOrder = async () => {
+        const { data } = await supabase
+          .from('orders')
+          .select('id, status')
+          .eq('user_id', user.uid)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (data) {
+          setLatestOrder(data);
+        }
+      };
+      fetchLatestOrder();
+    }
+  }, [user]);
+
+  const getOrderStatusColor = (status: string) => {
+    switch (status) {
+      case 'PENDING': return 'text-orange-600 bg-orange-50';
+      case 'PROCESSING': return 'text-blue-600 bg-blue-50';
+      case 'SHIPPED': return 'text-purple-600 bg-purple-50';
+      case 'DELIVERED': return 'text-green-600 bg-green-50';
+      case 'CANCELLED': return 'text-red-600 bg-red-50';
+      default: return 'text-gray-600 bg-gray-50';
+    }
+  };
+
+  const getOrderStatusText = (status: string) => {
+    switch (status) {
+      case 'PENDING': return 'Aguardando Pagamento';
+      case 'PROCESSING': return 'Em Separação';
+      case 'SHIPPED': return 'Saiu para Entrega';
+      case 'DELIVERED': return 'Entregue';
+      case 'CANCELLED': return 'Cancelado';
+      default: return 'Em Andamento';
+    }
+  };
+
   const handleLogout = async () => {
-    await signOut(auth);
+    await supabase.auth.signOut();
     setIsUserMenuOpen(false);
     navigate('/');
   };
@@ -44,7 +85,7 @@ export default function Navbar() {
   return (
     <nav className="sticky top-0 z-50 bg-white shadow-sm">
       <div className="bg-primary text-white py-2 px-4 text-center text-sm font-medium">
-        Frete grátis em compras acima de R$ 150,00! 🚚
+        Frete grátis em compras acima de R$ 100,00! 🚚
       </div>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16 sm:h-20">
@@ -118,9 +159,20 @@ export default function Navbar() {
                       <Link 
                         to="/account?tab=orders" 
                         onClick={() => setIsUserMenuOpen(false)}
-                        className="flex items-center px-4 py-3 text-sm text-gray-700 hover:bg-primary/5 hover:text-primary transition-colors"
+                        className="flex flex-col px-4 py-3 text-sm text-gray-700 hover:bg-primary/5 hover:text-primary transition-colors group"
                       >
-                        <ShoppingBag className="w-5 h-5 mr-3" /> Meus Pedidos
+                        <div className="flex items-center">
+                          <ShoppingBag className="w-5 h-5 mr-3" /> 
+                          <span className="font-medium">Meus Pedidos</span>
+                        </div>
+                        {latestOrder && (
+                          <div className="ml-8 mt-1.5 flex items-center space-x-2">
+                            <div className={`px-2 py-0.5 rounded text-[10px] font-bold ${getOrderStatusColor(latestOrder.status)}`}>
+                              {getOrderStatusText(latestOrder.status)}
+                            </div>
+                            <span className="text-[10px] text-gray-400 font-medium">Último pedido</span>
+                          </div>
+                        )}
                       </Link>
                     )}
 
@@ -201,61 +253,35 @@ export default function Navbar() {
 }
 
 function CategoryBar() {
-  const [activeMenu, setActiveMenu] = useState<string | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
   const categories = [
     { name: 'Ofertas da Semana 🔥', highlight: true, slug: 'ofertas' },
-    { name: 'Medicamentos', hasMegaMenu: true, slug: 'medicamentos' },
+    { name: 'Medicamentos', slug: 'medicamentos' },
     { name: 'Higiene Pessoal', slug: 'higiene-pessoal' },
     { name: 'Cosméticos e Beleza', slug: 'cosmeticos-e-beleza' },
     { name: 'Mamãe & Bebê', slug: 'mamae-e-bebe' },
     { name: 'Suplementos', slug: 'suplementos' },
-    { name: 'Ortopédicos', slug: 'prod-ortopedicos' },
+    { name: 'Ortopédicos', slug: 'ortopedicos' },
+    { name: 'Alimentos', slug: 'alimentos' },
   ];
-
-  const subcategories = [
-    'Analgésicos', 'Anti-inflamatórios', 'Gripes e Resfriados', 
-    'Antibióticos', 'Antialérgicos', 'Digestivos', 
-    'Dermatológicos', 'Oftalmológicos', 'Primeiros Socorros', 'Antissépiticos'
-  ];
-
-  const products = [
-    'Dipirona', 'Paracetamol', 'Ibuprofeno', 
-    'Ácido Acetilsalicílico (AAS)', 'Novalgina', 'Dorflex', 'Torsilax'
-  ];
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setActiveMenu(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   return (
     <div className="bg-[#2E7D32] text-white relative">
-      <div 
-        className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative"
-        onMouseLeave={() => setActiveMenu(null)}
-      >
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
         <div className="flex items-center h-12 overflow-x-auto no-scrollbar">
           {/* Todas as Categorias */}
-          <Link to="/categories" className="flex items-center space-x-2 bg-[#1B5E20] h-full px-6 font-bold whitespace-nowrap hover:bg-[#144317] transition-colors">
+          <Link to="/categories" className="flex items-center space-x-2 bg-[#1B5E20] h-full px-4 font-bold whitespace-nowrap hover:bg-[#144317] transition-colors flex-shrink-0">
             <Menu className="w-5 h-5" />
-            <span>Todas as categorias</span>
+            <span className="hidden sm:inline">Todas as categorias</span>
+            <span className="sm:hidden text-xs">Categorias</span>
           </Link>
 
           {/* Other Categories */}
-          <div className="flex items-center h-full ml-4 space-x-6">
+          <div className="flex items-center h-full ml-2 lg:ml-4 space-x-2 lg:space-x-3 flex-nowrap overflow-x-auto no-scrollbar">
             {categories.map((cat) => (
-              <div key={cat.name} className="h-full relative group">
+              <div key={cat.name} className="h-full relative group flex-shrink-0">
                 <Link 
                   to={`/category/${cat.slug}`}
-                  onMouseEnter={() => setActiveMenu(cat.hasMegaMenu ? cat.name : null)}
-                  className={`h-full text-sm font-bold whitespace-nowrap transition-colors flex items-center space-x-1 ${
+                  className={`h-full text-[13px] font-bold whitespace-nowrap transition-colors flex items-center space-x-1 px-1 ${
                     cat.highlight ? 'text-[#FFEB3B]' : 'text-white hover:text-white/80'
                   }`}
                 >
@@ -265,43 +291,6 @@ function CategoryBar() {
             ))}
           </div>
         </div>
-
-        {/* Mega Menu for Medicamentos - Moved outside scrolling container to avoid overflow issues */}
-        <AnimatePresence>
-          {activeMenu === 'Medicamentos' && (
-            <div 
-              ref={menuRef}
-              className="absolute top-full left-[280px] w-[600px] bg-white text-gray-800 shadow-2xl rounded-b-2xl border-t-4 border-[#2E7D32] z-[100] flex animate-in fade-in slide-in-from-top-2 duration-200"
-            >
-              {/* Sidebar */}
-              <div className="w-1/3 bg-gray-50 border-r border-gray-100 py-4">
-                {subcategories.map((sub, idx) => (
-                  <Link 
-                    key={sub}
-                    to={`/category/medicamentos?sub=${sub}`}
-                    className={`block w-full text-left px-6 py-2 text-sm font-medium transition-colors ${
-                      idx === 0 ? 'bg-[#E8F5E9] text-[#2E7D32] border-l-4 border-[#2E7D32]' : 'hover:bg-gray-100'
-                    }`}
-                  >
-                    {sub}
-                  </Link>
-                ))}
-              </div>
-              {/* Content */}
-              <div className="w-2/3 p-6 grid grid-cols-2 gap-4">
-                {products.map((prod) => (
-                  <Link 
-                    key={prod} 
-                    to={`/search?q=${prod}`}
-                    className="text-sm text-gray-600 hover:text-primary transition-colors"
-                  >
-                    {prod}
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
-        </AnimatePresence>
       </div>
     </div>
   );

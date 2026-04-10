@@ -38,11 +38,20 @@ export interface Product {
   images: string[];
   requiresPrescription: boolean;
   stripeType: 'None' | 'Red' | 'Black';
+  isWeeklyOffer: boolean;
   description: string;
+  variations?: {
+    name: string;
+    options: {
+      name: string;
+      stock: number;
+    }[];
+  }[];
 }
 
 export interface CartItem extends Product {
   quantity: number;
+  selectedVariations?: Record<string, string>;
 }
 
 export interface Order {

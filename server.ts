@@ -3,43 +3,44 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import { MercadoPagoConfig, Preference } from 'mercadopago';
 import path from 'path';
-import admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
-import firebaseConfig from './firebase-applet-config.json';
+import { createClient } from '@supabase/supabase-js';
 
-// Initialize Firebase Admin for server-side use (bypasses rules)
-// Initialize Firebase Admin safely
-let db: any;
+// Initialize Supabase Client for server-side use
+const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+
+let supabase: ReturnType<typeof createClient> | null = null;
 try {
-  if (!admin.apps.length) {
-    admin.initializeApp({
-      projectId: firebaseConfig.projectId,
-    });
+  if (supabaseUrl && supabaseKey) {
+    supabase = createClient(supabaseUrl, supabaseKey);
+  } else {
+    console.warn("Supabase credentials missing in .env");
   }
-  db = getFirestore(firebaseConfig.firestoreDatabaseId || '(default)');
 } catch (error) {
-  console.warn("Firebase Admin SDK failed to initialize:", (error as any).message);
+  console.warn("Supabase Client failed to initialize:", (error as any).message);
 }
 
 // Global safe DB helper
 const safeDb = {
-  get: async (collection: string, docId: string) => {
-    if (!db) return null;
+  get: async (table: string, docId: string): Promise<any> => {
+    if (!supabase) return null;
     try {
-      const doc = await db.collection(collection).doc(docId).get();
-      return doc.exists ? doc.data() : null;
+      const { data, error } = await supabase.from(table).select('*').eq('id', docId).single();
+      if (error) throw error;
+      return data;
     } catch (e) {
-      console.warn(`Firestore get failed (${collection}/${docId}):`, (e as any).message);
+      console.warn(`Supabase get failed (${table}/${docId}):`, (e as any).message);
       return null;
     }
   },
-  set: async (collection: string, docId: string, data: any) => {
-    if (!db) return false;
+  set: async (table: string, docId: string, data: any) => {
+    if (!supabase) return false;
     try {
-      await db.collection(collection).doc(docId).set(data, { merge: true });
+      const { error } = await supabase.from(table).upsert({ id: docId, ...data });
+      if (error) throw error;
       return true;
     } catch (e) {
-      console.warn(`Firestore set failed (${collection}/${docId}):`, (e as any).message);
+      console.warn(`Supabase set failed (${table}/${docId}):`, (e as any).message);
       return false;
     }
   }
@@ -68,13 +69,9 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '10mb' }));
 
   // API routes FIRST
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
-  });
-
   // Mercado Pago status check - works with env vars directly
   app.get("/api/mercadopago/status", async (req, res) => {
     const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
@@ -87,13 +84,13 @@ async function startServer() {
         publicKey: publicKey.substring(0, 20) + '...',
       });
     } else {
-      // Try Firestore as fallback
+      // Try Supabase Auth as fallback
       const settings = await safeDb.get('settings', 'mercadopago_private');
-      if (settings?.accessToken) {
+      if (settings?.access_token) {
         res.json({ 
           connected: true, 
           source: 'database',
-          userId: settings.userId,
+          userId: settings.user_id,
         });
       } else {
         res.json({ connected: false });
@@ -101,7 +98,7 @@ async function startServer() {
     }
   });
 
-  // Mercado Pago OAuth URL
+  // Mercado Pago status check - works with env vars directly
   app.get("/api/auth/mercadopago/url", (req, res) => {
     const clientId = process.env.MERCADOPAGO_CLIENT_ID;
     if (!clientId) {
@@ -148,16 +145,16 @@ async function startServer() {
       if (data.access_token) {
         // Store public info (safely)
         await safeDb.set('settings', 'mercadopago_public', {
-          publicKey: data.public_key,
-          updatedAt: new Date().toISOString(),
+          public_key: data.public_key,
+          updated_at: new Date().toISOString(),
         });
 
         // Store private tokens (safely)
         await safeDb.set('settings', 'mercadopago_private', {
-          accessToken: data.access_token,
-          userId: data.user_id,
-          refreshToken: data.refresh_token,
-          updatedAt: new Date().toISOString(),
+          access_token: data.access_token,
+          user_id: data.user_id,
+          refresh_token: data.refresh_token,
+          updated_at: new Date().toISOString(),
         });
 
         // Send success message and close popup
@@ -205,8 +202,8 @@ async function startServer() {
       
       let accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 
-      if (settingsData && settingsData.accessToken) {
-        accessToken = settingsData.accessToken;
+      if (settingsData && settingsData.access_token) {
+        accessToken = settingsData.access_token;
       }
 
       if (!accessToken) {
@@ -264,17 +261,31 @@ async function startServer() {
       const response = await preference.create(preferenceData);
       console.log("DEBUG: preference created successfully:", response.id);
 
-      // Create PENDING order in database using preference ID as order ID
-      await safeDb.set('orders', response.id, {
-        userId: userId || 'guest',
-        payerEmail: payerEmail || '',
-        items: items, // Save original items
-        total: subtotal + shipping,
-        status: 'PENDING',
-        paymentMethod: 'MERCADOPAGO',
-        createdAt: new Date().toISOString()
-      });
-      console.log(`DEBUG: Order ${response.id} stored in database as PENDING`);
+      // Create PENDING order in database with auto-generated UUID
+      try {
+        if (supabase) {
+          await supabase.from('orders').insert({
+            preference_id: response.id,
+            user_id: userId || null,
+            operator_name: payerEmail || '',
+            items: items.map((item: any) => ({
+              id: item.id,
+              name: item.name,
+              quantity: item.quantity,
+              price: item.price,
+              selectedVariations: item.selectedVariations || {}
+            })),
+            total: subtotal + shipping,
+            status: 'PENDING',
+            payment_method: 'MERCADOPAGO',
+            amount_paid: 0,
+            change: 0,
+          });
+          console.log(`DEBUG: Order for preference ${response.id} stored in database as PENDING`);
+        }
+      } catch (dbErr) {
+        console.error('Failed to save order:', dbErr);
+      }
 
       res.json({ 
         id: response.id, 
@@ -309,7 +320,6 @@ async function startServer() {
 
       await safeDb.set('orders', preference_id, {
         status: status,
-        updatedAt: new Date().toISOString()
       });
 
       res.json({ success: true, message: "Order updated successfully" });

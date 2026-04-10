@@ -1,7 +1,6 @@
 import { useSearchParams } from 'react-router-dom';
-import { collection, getDocs, query, where } from 'firebase/firestore';
 import { useQuery } from '@tanstack/react-query';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { supabase, mapProductFromDb, handleSupabaseError } from '../lib/supabase';
 import { Product } from '../types';
 import ProductCard from '../components/ProductCard';
 import { Search as SearchIcon } from 'lucide-react';
@@ -13,25 +12,19 @@ export default function Search() {
   const { data: products, isLoading } = useQuery({
     queryKey: ['search-products', q],
     queryFn: async () => {
-      const path = 'products';
       try {
-        // Firestore doesn't support full-text search natively without external services
-        // For this demo, we'll fetch all and filter client-side if the query is small,
-        // or just use where for exact matches if we want to be strict.
-        // But since we have a limited set of products, we can fetch and filter.
-        const snapshot = await getDocs(collection(db, path));
-        const allProducts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+        let query = supabase.from('products').select('*');
         
-        if (!q) return allProducts;
-
-        const searchLower = q.toLowerCase();
-        return allProducts.filter(p => 
-          p.name.toLowerCase().includes(searchLower) || 
-          p.description.toLowerCase().includes(searchLower) ||
-          p.category.toLowerCase().includes(searchLower)
-        );
+        if (q) {
+          const searchPattern = `%${q}%`;
+          query = query.or(`name.ilike.${searchPattern},description.ilike.${searchPattern},category.ilike.${searchPattern}`);
+        }
+        
+        const { data, error } = await query;
+        if (error) throw error;
+        return (data || []).map(mapProductFromDb) as Product[];
       } catch (error) {
-        handleFirestoreError(error, OperationType.LIST, path);
+        handleSupabaseError(error, 'SELECT', 'products');
         return [];
       }
     }

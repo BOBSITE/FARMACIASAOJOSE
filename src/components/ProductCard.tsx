@@ -63,10 +63,15 @@ export default function ProductCard({ product }: ProductCardProps) {
           {product.manufacturer}
         </p>
         <Link to={`/product/${product.id}`} className="block group-hover:text-primary transition-colors">
-          <h3 className="text-sm font-bold text-gray-800 line-clamp-2 leading-snug mb-2 h-10">
+          <h3 className="text-sm font-bold text-gray-800 line-clamp-2 leading-snug mb-1 h-10">
             {product.name}
           </h3>
         </Link>
+        {product.sku && (
+          <p className="text-[9px] text-gray-400 font-mono mb-2">
+            SKU: {product.sku}
+          </p>
+        )}
         
         <div className="flex items-center space-x-1 mb-3">
           <div className="flex text-accent">

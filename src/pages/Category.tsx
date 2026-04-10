@@ -1,8 +1,7 @@
 import React from 'react';
 import { useSearchParams, useParams } from 'react-router-dom';
-import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { useQuery } from '@tanstack/react-query';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { supabase, mapProductFromDb, handleSupabaseError } from '../lib/supabase';
 import { Product } from '../types';
 import ProductCard from '../components/ProductCard';
 import { motion } from 'motion/react';
@@ -53,44 +52,131 @@ export default function Category() {
   const [searchParams] = useSearchParams();
   const subcategory = searchParams.get('sub');
 
-  const { data: products, isLoading } = useQuery({
+  const [selectedBrands, setSelectedBrands] = React.useState<string[]>([]);
+  const [selectedSubs, setSelectedSubs] = React.useState<string[]>([]);
+  const [maxPrice, setMaxPrice] = React.useState<number>(5000);
+  const [currentPrice, setCurrentPrice] = React.useState<number>(5000);
+  const [sortBy, setSortBy] = React.useState<string>('Mais relevantes');
+
+  const { data: allProducts, isLoading } = useQuery({
     queryKey: ['products-category', categoryId, subcategory],
     queryFn: async () => {
-      const path = 'products';
       try {
-        let q = query(collection(db, path));
+        let query = supabase.from('products').select('*');
         
         if (categoryId && categoryId !== 'todas') {
-          // Map URL friendly names back to display names if needed, 
-          // but assuming they match for now or handled by slug logic
-          const categoryMap: Record<string, string> = {
-            'medicamentos': 'Medicamentos',
-            'cosmeticos-e-beleza': 'Cosméticos e Beleza',
-            'higiene-pessoal': 'Higiene Pessoal',
-            'prod-ortopedicos': 'Prod. Ortopédicos',
-            'alimentos': 'Alimentos',
-            'vida-saudavel': 'Vida Saudável',
-            'ofertas': 'Ofertas'
-          };
-          
-          const targetCategory = categoryMap[categoryId] || categoryId;
-          q = query(q, where('category', '==', targetCategory));
+          if (categoryId === 'ofertas') {
+            query = query.eq('is_weekly_offer', true);
+          } else {
+            const categoryMap: Record<string, string> = {
+              'medicamentos': 'Medicamentos',
+              'cosmeticos-e-beleza': 'Cosméticos e Beleza',
+              'higiene-pessoal': 'Higiene Pessoal',
+              'ortopedicos': 'Ortopédicos',
+              'prod-ortopedicos': 'Ortopédicos',
+              'alimentos': 'Alimentos',
+              'suplementos': 'Suplementos',
+              'vida-saudavel': 'Suplementos',
+              'mamae-e-bebe': 'Mamãe & Bebê'
+            };
+            
+            const targetCategory = categoryMap[categoryId] || categoryId;
+            query = query.eq('category', targetCategory);
+          }
         }
 
         if (subcategory) {
-          q = query(q, where('subcategory', '==', subcategory));
+          query = query.eq('subcategory', subcategory);
         }
 
-        const snapshot = await getDocs(q);
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+        const { data, error } = await query;
+        if (error) throw error;
+        return (data || []).map(mapProductFromDb) as Product[];
       } catch (error) {
-        handleFirestoreError(error, OperationType.LIST, path);
+        handleSupabaseError(error, 'SELECT', 'products');
         return [];
       }
     }
   });
 
-  const categoryTitle = categoryId ? categoryId.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') : 'Todas as Categorias';
+  const availableBrands = React.useMemo(() => {
+    if (!allProducts) return [];
+    const counts = allProducts.reduce((acc, p) => {
+      acc[p.manufacturer] = (acc[p.manufacturer] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [allProducts]);
+
+  const availableSubs = React.useMemo(() => {
+    if (!allProducts) return [];
+    const counts = allProducts.reduce((acc, p) => {
+      if (p.subcategory) {
+        acc[p.subcategory] = (acc[p.subcategory] || 0) + 1;
+      }
+      return acc;
+    }, {} as Record<string, number>);
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [allProducts]);
+
+  React.useEffect(() => {
+    if (allProducts && allProducts.length > 0) {
+      const highest = Math.max(...allProducts.map(p => p.price));
+      const roundedMax = Math.ceil(highest / 100) * 100 || 100; // Round up to nearest 100
+      setMaxPrice(roundedMax);
+      setCurrentPrice(roundedMax);
+    }
+  }, [allProducts]);
+
+  const filteredProducts = React.useMemo(() => {
+    if (!allProducts) return [];
+    
+    let filtered = allProducts.filter(p => {
+      const matchBrand = selectedBrands.length === 0 || selectedBrands.includes(p.manufacturer);
+      // Only filter by subcategory if no URL subcategory is active (otherwise it's redundant/conflicting)
+      const matchSub = (selectedSubs.length === 0 || !p.subcategory) ? true : selectedSubs.includes(p.subcategory);
+      const matchPrice = p.price <= currentPrice;
+      return matchBrand && matchPrice && (!subcategory || p.subcategory === subcategory) && matchSub;
+    });
+
+    switch (sortBy) {
+      case 'Menor preço':
+        filtered.sort((a, b) => a.price - b.price);
+        break;
+      case 'Maior preço':
+        filtered.sort((a, b) => b.price - a.price);
+        break;
+      case 'Mais vendidos':
+        filtered.sort((a, b) => (b.badge === 'Mais Vendido' ? -1 : 1));
+        break;
+    }
+
+    return filtered;
+  }, [allProducts, selectedBrands, selectedSubs, currentPrice, sortBy, subcategory]);
+
+  const toggleBrand = (brand: string) => {
+    setSelectedBrands(prev => 
+      prev.includes(brand) ? prev.filter(b => b !== brand) : [...prev, brand]
+    );
+  };
+
+  const toggleSub = (sub: string) => {
+    setSelectedSubs(prev => 
+      prev.includes(sub) ? prev.filter(s => s !== sub) : [...prev, sub]
+    );
+  };
+
+  const clearFilters = () => {
+    setSelectedBrands([]);
+    setSelectedSubs([]);
+    setCurrentPrice(maxPrice);
+  };
+
+  const categoryTitle = categoryId === 'ofertas' 
+    ? 'Ofertas da Semana' 
+    : categoryId 
+      ? categoryId.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') 
+      : 'Todas as Categorias';
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -114,110 +200,78 @@ export default function Category() {
         <aside className="w-full md:w-72 space-y-4">
           <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="font-black text-xl text-gray-800">Dermo e Beleza</h3>
+              <h3 className="font-black text-xl text-gray-800">{categoryTitle}</h3>
             </div>
             
             <div className="space-y-4">
-              {/* Filter Section Component */}
-              <FilterSection title="Categorias" defaultOpen={true}>
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-2 no-scrollbar">
-                  {['Perfumes Femininos (100)', 'Perfumes Masculinos (150)', 'Esmalte (50)', 'Shampoo (80)', 'Hidratante Corporal (120)', 'Condicionador (40)', 'Sabonetes e Sais de Banho (110)', 'Máscara de Hidratação (70)'].map(item => (
-                    <label key={item} className="flex items-center space-x-2 cursor-pointer group">
-                      <input type="checkbox" className="rounded text-primary focus:ring-primary w-4 h-4" />
-                      <span className="text-xs text-gray-500 group-hover:text-primary transition-colors">{item}</span>
-                    </label>
-                  ))}
-                </div>
-              </FilterSection>
-
-              <FilterSection title="Fragrância">
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-2 no-scrollbar">
-                  {['Citrus (12)', 'Floral (45)', 'Amadeirado (30)', 'Doce (25)', 'Fresco (18)'].map(item => (
-                    <label key={item} className="flex items-center space-x-2 cursor-pointer group">
-                      <input type="checkbox" className="rounded text-primary focus:ring-primary w-4 h-4" />
-                      <span className="text-xs text-gray-500 group-hover:text-primary transition-colors">{item}</span>
-                    </label>
-                  ))}
-                </div>
-              </FilterSection>
-
-              <FilterSection title="Embalagem">
-                <div className="space-y-2">
-                  {['Frasco (85)', 'Refil (15)', 'Box (10)'].map(item => (
-                    <label key={item} className="flex items-center space-x-2 cursor-pointer group">
-                      <input type="checkbox" className="rounded text-primary focus:ring-primary w-4 h-4" />
-                      <span className="text-xs text-gray-500 group-hover:text-primary transition-colors">{item}</span>
-                    </label>
-                  ))}
-                </div>
-              </FilterSection>
-
-              <FilterSection title="Kit">
-                <div className="space-y-2">
-                  <label className="flex items-center space-x-2 cursor-pointer group">
-                    <input type="checkbox" className="rounded text-primary focus:ring-primary w-4 h-4" />
-                    <span className="text-xs text-gray-500 group-hover:text-primary transition-colors">Sim (15)</span>
-                  </label>
-                </div>
-              </FilterSection>
-
-              <FilterSection title="Tamanho">
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-2 no-scrollbar">
-                  {['250ml (40)', '500ml (30)', '1L (15)', '200g (25)', '400g (20)'].map(item => (
-                    <label key={item} className="flex items-center space-x-2 cursor-pointer group">
-                      <input type="checkbox" className="rounded text-primary focus:ring-primary w-4 h-4" />
-                      <span className="text-xs text-gray-500 group-hover:text-primary transition-colors">{item}</span>
-                    </label>
-                  ))}
-                </div>
-              </FilterSection>
-
-              <FilterSection title="Voltagem">
-                <div className="space-y-2">
-                  {['110v (5)', '220v (4)', 'Bivolt (8)'].map(item => (
-                    <label key={item} className="flex items-center space-x-2 cursor-pointer group">
-                      <input type="checkbox" className="rounded text-primary focus:ring-primary w-4 h-4" />
-                      <span className="text-xs text-gray-500 group-hover:text-primary transition-colors">{item}</span>
-                    </label>
-                  ))}
-                </div>
-              </FilterSection>
-
               <div className="py-4 border-t border-gray-50">
-                <h4 className="font-bold text-sm text-gray-700 mb-4 flex items-center">
-                  <span className="w-2 h-2 bg-primary rounded-full mr-2"></span>
-                  Faixa de Preço
-                </h4>
+                <div className="flex justify-between items-center mb-4">
+                  <h4 className="font-bold text-sm text-gray-700 flex items-center">
+                    <span className="w-2 h-2 bg-primary rounded-full mr-2"></span>
+                    Faixa de Preço
+                  </h4>
+                  {(selectedBrands.length > 0 || selectedSubs.length > 0 || currentPrice < maxPrice) && (
+                    <button 
+                      onClick={clearFilters}
+                      className="text-xs font-bold text-red-500 hover:text-red-700 hover:underline"
+                    >
+                      Limpar Filtros
+                    </button>
+                  )}
+                </div>
                 <div className="px-2">
-                  <input type="range" className="w-full accent-primary" min="0" max="5000" />
+                  <input 
+                    type="range" 
+                    className="w-full accent-primary" 
+                    min="0" 
+                    max={maxPrice} 
+                    value={currentPrice}
+                    onChange={(e) => setCurrentPrice(Number(e.target.value))}
+                  />
                   <div className="flex justify-between mt-2 text-[10px] font-bold text-gray-400">
                     <span>R$ 0,00</span>
-                    <span>R$ 5.000,00</span>
+                    <span>R$ {currentPrice.toFixed(2).replace('.', ',')}</span>
                   </div>
                 </div>
               </div>
 
-              <FilterSection title="Marcas" defaultOpen={true}>
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-2 no-scrollbar">
-                  {['Vichy (124)', 'La Roche (150)', 'Eucerin (80)', 'Avène (95)', 'Nivea (200)', 'L\'Oréal (180)', 'Dove (140)'].map(item => (
-                    <label key={item} className="flex items-center space-x-2 cursor-pointer group">
-                      <input type="checkbox" className="rounded text-primary focus:ring-primary w-4 h-4" />
-                      <span className="text-xs text-gray-500 group-hover:text-primary transition-colors">{item}</span>
-                    </label>
-                  ))}
-                </div>
-              </FilterSection>
+              {availableBrands.length > 0 && (
+                <FilterSection title="Marcas" defaultOpen={true}>
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-2 no-scrollbar">
+                    {availableBrands.map(([brand, count]) => (
+                      <label key={brand} className="flex items-center space-x-2 cursor-pointer group">
+                        <input 
+                          type="checkbox" 
+                          checked={selectedBrands.includes(brand)}
+                          onChange={() => toggleBrand(brand)}
+                          className="rounded text-primary focus:ring-primary w-4 h-4" 
+                        />
+                        <span className="text-xs text-gray-500 group-hover:text-primary transition-colors flex-1 truncate">{brand}</span>
+                        <span className="text-[10px] text-gray-400 font-medium">({count})</span>
+                      </label>
+                    ))}
+                  </div>
+                </FilterSection>
+              )}
 
-              <FilterSection title="Subcategorias">
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-2 no-scrollbar">
-                  {['Skincare (300)', 'Cabelos (450)', 'Corpo e Banho (200)', 'Maquiagem (150)', 'Proteção Solar (120)'].map(item => (
-                    <label key={item} className="flex items-center space-x-2 cursor-pointer group">
-                      <input type="checkbox" className="rounded text-primary focus:ring-primary w-4 h-4" />
-                      <span className="text-xs text-gray-500 group-hover:text-primary transition-colors">{item}</span>
-                    </label>
-                  ))}
-                </div>
-              </FilterSection>
+              {!subcategory && availableSubs.length > 0 && (
+                <FilterSection title="Subcategorias">
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-2 no-scrollbar">
+                    {availableSubs.map(([sub, count]) => (
+                      <label key={sub} className="flex items-center space-x-2 cursor-pointer group">
+                        <input 
+                          type="checkbox" 
+                          checked={selectedSubs.includes(sub)}
+                          onChange={() => toggleSub(sub)}
+                          className="rounded text-primary focus:ring-primary w-4 h-4" 
+                        />
+                        <span className="text-xs text-gray-500 group-hover:text-primary transition-colors flex-1 truncate">{sub}</span>
+                        <span className="text-[10px] text-gray-400 font-medium">({count})</span>
+                      </label>
+                    ))}
+                  </div>
+                </FilterSection>
+              )}
             </div>
           </div>
         </aside>
@@ -228,11 +282,15 @@ export default function Category() {
             <h1 className="text-3xl font-display font-black text-gray-900">
               {subcategory || categoryTitle}
               <span className="ml-4 text-sm font-normal text-gray-400">
-                {products?.length || 0} produtos encontrados
+                {filteredProducts.length} produtos encontrados
               </span>
             </h1>
             
-            <select className="bg-white border-gray-200 rounded-full px-4 py-2 text-sm focus:ring-primary focus:border-primary outline-none">
+            <select 
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="bg-white border-gray-200 rounded-full px-4 py-2 text-sm focus:ring-primary focus:border-primary outline-none"
+            >
               <option>Mais relevantes</option>
               <option>Menor preço</option>
               <option>Maior preço</option>
@@ -246,9 +304,9 @@ export default function Category() {
                 <div key={i} className="bg-white rounded-3xl h-80 animate-pulse"></div>
               ))}
             </div>
-          ) : products && products.length > 0 ? (
+          ) : filteredProducts.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {products.map((product) => (
+              {filteredProducts.map((product) => (
                 <ProductCard key={product.id} product={product} />
               ))}
             </div>

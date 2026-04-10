@@ -7,9 +7,8 @@ import {
   Monitor, Package, ChevronLeft, AlertCircle,
   Printer, X, Calculator, Hash, UserPlus, Check
 } from 'lucide-react';
-import { collection, getDocs, query, limit, addDoc } from 'firebase/firestore';
 import { useQuery } from '@tanstack/react-query';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { supabase, mapProductFromDb, handleSupabaseError } from '../lib/supabase';
 import { CartItem, Product } from '../types';
 import { useAuthStore } from '../lib/store';
 
@@ -107,13 +106,15 @@ export default function PDV() {
   const { data: products, isLoading, error } = useQuery({
     queryKey: ['products-pdv'],
     queryFn: async () => {
-      const path = 'products';
       try {
-        const q = query(collection(db, path), limit(100));
-        const snapshot = await getDocs(q);
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+        const { data, error } = await supabase
+          .from('products')
+          .select('*')
+          .limit(100);
+        if (error) throw error;
+        return (data || []).map(mapProductFromDb) as Product[];
       } catch (error) {
-        handleFirestoreError(error, OperationType.LIST, path);
+        handleSupabaseError(error, 'SELECT', 'products');
         return [];
       }
     },
@@ -177,8 +178,8 @@ export default function PDV() {
       }
 
       const orderData = {
-        userId: user?.uid || 'anonymous',
-        customerCpf: customerCpf || null,
+        user_id: user?.uid || null,
+        customer_cpf: customerCpf || null,
         items: cart.map(item => ({
           id: item.id,
           name: item.name,
@@ -188,17 +189,18 @@ export default function PDV() {
         })),
         total,
         status: 'APPROVED',
-        paymentMethod,
-        amountPaid: paymentMethod === 'CASH' ? parseFloat(amountPaid) : total,
+        payment_method: paymentMethod,
+        amount_paid: paymentMethod === 'CASH' ? parseFloat(amountPaid) : total,
         change: paymentMethod === 'CASH' ? change : 0,
-        createdAt: new Date().toISOString(),
-        isPdv: true,
-        operatorId: user?.uid,
-        operatorName: user?.displayName || 'SISTEMA'
+        created_at: new Date().toISOString(),
+        is_pdv: true,
+        operator_id: user?.uid || null,
+        operator_name: user?.displayName || 'SISTEMA'
       };
 
-      // Add order to Firestore
-      await addDoc(collection(db, 'orders'), orderData);
+      // Add order to Supabase
+      const { error } = await supabase.from('orders').insert(orderData);
+      if (error) throw error;
 
       // Store last sale data for printing before clearing
       setLastSale({
@@ -219,7 +221,7 @@ export default function PDV() {
       setAmountPaid('');
       setPaymentMethod(null);
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'orders');
+      handleSupabaseError(error, 'INSERT', 'orders');
     } finally {
       setIsProcessing(false);
     }
@@ -358,6 +360,10 @@ export default function PDV() {
                   <div className="flex-grow">
                     <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">{product.manufacturer}</p>
                     <h3 className="font-black text-gray-900 text-xs line-clamp-2 leading-tight uppercase">{product.name}</h3>
+                    <div className="flex flex-col mt-1 gap-1">
+                      {product.sku && <p className="text-[9px] font-bold text-gray-400">SKU: {product.sku}</p>}
+                      {product.ean && <p className="text-[9px] font-bold text-gray-300 font-mono tracking-tighter">EAN: {product.ean}</p>}
+                    </div>
                   </div>
                   <div className="mt-3 flex items-center justify-between">
                     <p className="text-lg font-black text-primary tracking-tighter">R$ {product.price.toFixed(2)}</p>
@@ -416,6 +422,11 @@ export default function PDV() {
                       <p className="text-[10px] text-gray-500">
                         {item.quantity} UN X R$ {item.price.toFixed(2)}
                       </p>
+                      {item.sku && (
+                        <p className="text-[8px] text-gray-400 mt-1 uppercase font-mono">
+                          REF: {item.sku}
+                        </p>
+                      )}
                     </div>
                     <div className="text-right flex flex-col items-end">
                       <span className="font-black">R$ {(item.price * item.quantity).toFixed(2)}</span>

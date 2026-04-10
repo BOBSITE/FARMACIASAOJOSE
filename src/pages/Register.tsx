@@ -5,10 +5,7 @@ import * as z from 'zod';
 import { motion } from 'motion/react';
 import { Mail, Lock, User, CreditCard, ArrowRight, ShieldCheck } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { doc, setDoc } from 'firebase/firestore';
-import { UserProfile } from '../types';
+import { supabase, handleSupabaseError } from '../lib/supabase';
 
 const registerSchema = z.object({
   name: z.string().min(3, 'Nome muito curto'),
@@ -34,36 +31,28 @@ export default function Register() {
     setLoading(true);
     setError('');
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
-      const firebaseUser = userCredential.user;
-
-      await updateProfile(firebaseUser, { displayName: data.name });
-
-      const profile: UserProfile = {
-        uid: firebaseUser.uid,
+      const { data: authData, error: authError } = await supabase.auth.signUp({
         email: data.email,
-        displayName: data.name,
-        cpf: data.cpf,
-        role: 'CLIENT',
-        loyaltyPoints: 0,
-        createdAt: new Date().toISOString(),
-      };
+        password: data.password,
+        options: {
+          data: {
+            display_name: data.name,
+            cpf: data.cpf,
+          }
+        }
+      });
+      if (authError) throw authError;
 
-      const path = `users/${firebaseUser.uid}`;
-      try {
-        await setDoc(doc(db, 'users', firebaseUser.uid), profile);
-      } catch (fsError) {
-        handleFirestoreError(fsError, OperationType.WRITE, path);
+      if (!authData.session) {
+        alert('Cadastro realizado! Por favor, verifique seu e-mail (ou a caixa de spam) para confirmar a conta antes de fazer o login.');
+        navigate('/login');
+      } else {
+        navigate('/');
       }
-      
-      navigate('/');
     } catch (err: any) {
       let message = err.message || 'Erro ao criar conta.';
-      try {
-        const parsed = JSON.parse(message);
-        if (parsed.error) message = parsed.error;
-      } catch (e) {
-        // Not a JSON string, use original message
+      if (message === 'User already registered') {
+        message = 'Este e-mail já está cadastrado.';
       }
       setError(message);
     } finally {

@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { ShoppingCart, ShieldCheck, Truck, Clock, Heart, Share2, Star, ChevronRight, Minus, Plus, AlertCircle } from 'lucide-react';
-import { doc, getDoc, collection, getDocs, query, limit, where } from 'firebase/firestore';
 import { useQuery } from '@tanstack/react-query';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { supabase, mapProductFromDb, handleSupabaseError } from '../lib/supabase';
 import { useCartStore } from '../lib/store';
 import { Product } from '../types';
 import ProductCard from '../components/ProductCard';
+import PrescriptionModal from '../components/PrescriptionModal';
 
 export default function ProductDetails() {
   const { id } = useParams();
@@ -15,21 +15,24 @@ export default function ProductDetails() {
   const { addItem } = useCartStore();
   const [quantity, setQuantity] = useState(1);
   const [activeImage, setActiveImage] = useState(0);
+  const [activeTab, setActiveTab] = useState<'desc' | 'reviews'>('desc');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
 
   const { data: product, isLoading } = useQuery({
     queryKey: ['product', id],
     queryFn: async () => {
       if (!id) return null;
-      const path = `products/${id}`;
       try {
-        const docRef = doc(db, 'products', id);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          return { id: docSnap.id, ...docSnap.data() } as Product;
-        }
-        return null;
+        const { data, error } = await supabase
+          .from('products')
+          .select('*')
+          .eq('id', id)
+          .single();
+        if (error) throw error;
+        return mapProductFromDb(data) as Product;
       } catch (error) {
-        handleFirestoreError(error, OperationType.GET, path);
+        handleSupabaseError(error, 'SELECT', `products/${id}`);
         return null;
       }
     },
@@ -40,20 +43,19 @@ export default function ProductDetails() {
     queryKey: ['products-related', product?.category],
     queryFn: async () => {
       if (!product?.category) return [];
-      const path = 'products';
       try {
-        const q = query(
-          collection(db, path), 
-          where('category', '==', product.category),
-          limit(5)
-        );
-        const snapshot = await getDocs(q);
-        return snapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() } as Product))
-          .filter(p => p.id !== product.id)
-          .slice(0, 4);
+        const { data, error } = await supabase
+          .from('products')
+          .select('*')
+          .eq('category', product.category)
+          .limit(5);
+        if (error) throw error;
+        return (data || [])
+          .map(mapProductFromDb)
+          .filter((p: Product) => p.id !== product.id)
+          .slice(0, 4) as Product[];
       } catch (error) {
-        handleFirestoreError(error, OperationType.LIST, path);
+        handleSupabaseError(error, 'SELECT', 'products');
         return [];
       }
     },
@@ -78,8 +80,17 @@ export default function ProductDetails() {
     );
   }
 
-  const handleAddToCart = () => {
-    addItem({ ...product, quantity });
+  const handleAddToCartClick = () => {
+    if (product.requiresPrescription) {
+      setIsModalOpen(true);
+    } else {
+      addItem({ ...product, quantity, selectedVariations: selectedOptions });
+    }
+  };
+
+  const handleConfirmPrescription = () => {
+    addItem({ ...product, quantity, selectedVariations: selectedOptions });
+    setIsModalOpen(false);
   };
 
   const discount = product.promoPrice && product.promoPrice > product.price
@@ -141,9 +152,16 @@ export default function ProductDetails() {
         <div className="space-y-8">
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-black text-primary uppercase tracking-widest bg-primary/10 px-3 py-1 rounded-full">
-                {product.manufacturer}
-              </span>
+              <div className="flex flex-col">
+                <span className="text-xs font-black text-primary uppercase tracking-widest bg-primary/10 px-3 py-1 rounded-full w-fit">
+                  {product.manufacturer}
+                </span>
+                {product.sku && (
+                  <span className="text-[10px] text-gray-400 mt-2 font-mono">
+                    REF: {product.sku}
+                  </span>
+                )}
+              </div>
               <div className="flex space-x-2">
                 <button className="p-2 bg-gray-100 rounded-full text-gray-500 hover:text-secondary transition-colors">
                   <Heart className="w-5 h-5" />
@@ -178,6 +196,41 @@ export default function ProductDetails() {
                 <p className="font-bold text-sm">Medicamento de Tarja {product.stripeType === 'Red' ? 'Vermelha' : 'Preta'}</p>
                 <p className="text-xs opacity-80">A venda deste medicamento requer a apresentação de receita médica original.</p>
               </div>
+            </div>
+          )}
+
+          {product.variations && product.variations.length > 0 && (
+            <div className="space-y-6">
+              {product.variations.map((variation) => (
+                <div key={variation.name} className="space-y-3">
+                  <p className="text-sm text-gray-500 font-medium">
+                    {variation.name}: <span className="text-gray-900 font-black">{selectedOptions[variation.name] || variation.options[0]?.name}</span>
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {variation.options.map((opt) => {
+                      const isSelected = (selectedOptions[variation.name] || variation.options[0]?.name) === opt.name;
+                      const isOutOfStock = opt.stock === 0;
+                      
+                      return (
+                        <button
+                          key={opt.name}
+                          disabled={isOutOfStock}
+                          onClick={() => setSelectedOptions(prev => ({ ...prev, [variation.name]: opt.name }))}
+                          className={`px-4 py-2 rounded-full text-sm font-bold transition-all border-2 ${
+                            isSelected 
+                              ? 'bg-[#E3F2FD] border-[#0047BA] text-[#0047BA]' 
+                              : isOutOfStock
+                                ? 'border-dashed border-gray-300 text-gray-300 cursor-not-allowed'
+                                : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                          }`}
+                        >
+                          {opt.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 
@@ -217,7 +270,7 @@ export default function ProductDetails() {
                 </button>
               </div>
               <button
-                onClick={handleAddToCart}
+                onClick={handleAddToCartClick}
                 className="flex-grow bg-primary hover:bg-primary/90 text-white font-black py-4 rounded-2xl flex items-center justify-center space-x-3 transition-all shadow-xl shadow-primary/20 active:scale-95"
               >
                 <ShoppingCart className="w-6 h-6" />
@@ -242,6 +295,18 @@ export default function ProductDetails() {
               </div>
             </div>
           </div>
+          
+          {product.requiresPrescription && (
+            <div className="bg-[#FFF8E1] border border-[#FFE082] rounded-xl p-4 flex items-start space-x-3">
+              <AlertCircle className="w-5 h-5 text-[#F57F17] flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-bold text-gray-800 mb-0.5">Retenção de Receita</p>
+                <p className="text-[10px] text-gray-600 leading-relaxed">
+                  Este produto requer retenção de receita médica. O envio da receita será solicitado antes de adicionar ao carrinho.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -249,24 +314,76 @@ export default function ProductDetails() {
       <div className="space-y-8 mb-20">
         <div className="border-b border-gray-200">
           <div className="flex space-x-8">
-            <button className="border-b-4 border-primary py-4 px-2 font-black text-gray-900">Descrição</button>
-            <button className="py-4 px-2 font-bold text-gray-400 hover:text-gray-600">Informações Técnicas</button>
-            <button className="py-4 px-2 font-bold text-gray-400 hover:text-gray-600">Avaliações</button>
+            <button 
+              onClick={() => setActiveTab('desc')}
+              className={`py-4 px-2 font-black transition-all border-b-4 ${
+                activeTab === 'desc' ? 'border-primary text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              Descrição
+            </button>
+            <button 
+              onClick={() => setActiveTab('reviews')}
+              className={`py-4 px-2 font-black transition-all border-b-4 ${
+                activeTab === 'reviews' ? 'border-primary text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              Avaliações
+            </button>
           </div>
         </div>
-        <div className="prose prose-sm max-w-none text-gray-600 leading-relaxed">
-          <p>{product.description}</p>
-          <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.</p>
-          <ul className="list-disc pl-5 space-y-2">
-            <li>Princípio Ativo: {product.activeIngredient || 'N/A'}</li>
-            <li>Fabricante: {product.manufacturer}</li>
-            <li>EAN: {product.ean}</li>
-            <li>Registro MS: 1.2345.6789.001-2</li>
-          </ul>
-        </div>
-      </div>
 
-      {/* Related Products */}
+        {activeTab === 'desc' ? (
+          <div className="prose prose-sm max-w-none text-gray-600 leading-relaxed break-words overflow-x-hidden">
+            <div 
+              dangerouslySetInnerHTML={{ __html: product.description || '' }} 
+              className="mb-8 overflow-hidden"
+            />
+            <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100">
+              <h4 className="text-gray-900 font-black uppercase tracking-tight mb-4">Especificações</h4>
+              <ul className="list-none p-0 space-y-3">
+                <li className="flex justify-between border-b border-gray-200 pb-2">
+                  <span className="font-bold text-gray-400 uppercase text-[10px]">Princípio Ativo</span>
+                  <span className="font-black text-gray-900 text-xs">{product.activeIngredient || 'N/A'}</span>
+                </li>
+                <li className="flex justify-between border-b border-gray-200 pb-2">
+                  <span className="font-bold text-gray-400 uppercase text-[10px]">Fabricante</span>
+                  <span className="font-black text-gray-900 text-xs">{product.manufacturer}</span>
+                </li>
+                {product.ean && (
+                  <li className="flex justify-between border-b border-gray-200 pb-2">
+                    <span className="font-bold text-gray-400 uppercase text-[10px]">EAN</span>
+                    <span className="font-black text-gray-900 text-xs">{product.ean}</span>
+                  </li>
+                )}
+                {product.sku && (
+                  <li className="flex justify-between border-b border-gray-200 pb-2">
+                    <span className="font-bold text-gray-400 uppercase text-[10px]">SKU</span>
+                    <span className="font-black text-gray-900 text-xs">{product.sku}</span>
+                  </li>
+                )}
+                <li className="flex justify-between border-b border-gray-200 pb-2">
+                  <span className="font-bold text-gray-400 uppercase text-[10px]">Registro MS</span>
+                  <span className="font-black text-gray-900 text-xs">1.2345.6789.001-2</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        ) : (
+          <div className="py-12 text-center bg-gray-50 rounded-[2.5rem] border border-dashed border-gray-200">
+            <div className="max-w-md mx-auto space-y-4">
+              <div className="flex justify-center text-accent">
+                {[...Array(5)].map((_, i) => <Star key={i} className="w-8 h-8 fill-current" />)}
+              </div>
+              <h3 className="text-xl font-black text-gray-900 uppercase tracking-tighter">Ainda não há avaliações</h3>
+              <p className="text-sm text-gray-500 font-bold">Seja o primeiro a avaliar este produto e ajude outros clientes!</p>
+              <button className="bg-white px-8 py-3 rounded-2xl border border-gray-200 font-black text-xs uppercase tracking-widest hover:border-primary hover:text-primary transition-all shadow-sm">
+                Escrever Avaliação
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
       <section>
         <h2 className="text-2xl font-display font-black text-gray-900 mb-8">Quem viu este produto, também viu</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -275,6 +392,12 @@ export default function ProductDetails() {
           ))}
         </div>
       </section>
+
+      <PrescriptionModal 
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onConfirm={handleConfirmPrescription}
+      />
     </div>
   );
 }

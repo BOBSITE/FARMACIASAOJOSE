@@ -1,9 +1,7 @@
 import { useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType, seedProducts } from './lib/firebase';
-import { useAuthStore } from './lib/store';
+import { supabase, mapUserFromDb, handleSupabaseError } from './lib/supabase';
+import { useAuthStore, useSettingsStore } from './lib/store';
 import { UserProfile } from './types';
 
 // Components
@@ -26,6 +24,7 @@ import Account from './pages/Account';
 
 export default function App() {
   const { setUser, setAuthReady } = useAuthStore();
+  const { fetchSettings } = useSettingsStore();
   const location = useLocation();
 
   const isDashboard = location.pathname.startsWith('/dashboard');
@@ -33,55 +32,62 @@ export default function App() {
   const hideLayout = isDashboard || isPDV;
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        const path = `users/${firebaseUser.uid}`;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Use an IIFE to prevent GoTrue from awaiting this execution and hanging
+      (async () => {
+      if (session?.user) {
+        const uid = session.user.id;
         try {
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-          let profile: UserProfile;
+          const { data: userRow, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', uid)
+            .single();
 
-          if (userDoc.exists()) {
-            profile = userDoc.data() as UserProfile;
-            console.log('User profile found:', profile);
+          if (error && error.code === 'PGRST116') {
+            // No profile found, create one
+            console.log('No user profile found, creating new one...');
+            const isAdminEmail = session.user.email === 'betvdoc@gmail.com';
+            const newProfile = {
+              id: uid,
+              email: session.user.email || '',
+              display_name: session.user.user_metadata?.display_name || session.user.email?.split('@')[0] || '',
+              cpf: session.user.user_metadata?.cpf || null,
+              role: isAdminEmail ? 'ADMIN' : 'CLIENT',
+              loyalty_points: 0,
+            };
+            const { error: insertError } = await supabase.from('users').insert(newProfile);
+            if (insertError) {
+              handleSupabaseError(insertError, 'INSERT', 'users');
+            }
+            setUser(mapUserFromDb(newProfile) as UserProfile);
+          } else if (error) {
+            handleSupabaseError(error, 'SELECT', 'users');
+          } else if (userRow) {
+            let profile = mapUserFromDb(userRow) as UserProfile;
             // Force admin role for the specific email if not already set
-            if (firebaseUser.email === 'betvdoc@gmail.com' && profile.role !== 'ADMIN') {
+            if (session.user.email === 'betvdoc@gmail.com' && profile.role !== 'ADMIN') {
               console.log('Forcing ADMIN role for betvdoc@gmail.com');
+              await supabase.from('users').update({ role: 'ADMIN' }).eq('id', uid);
               profile.role = 'ADMIN';
-              await setDoc(doc(db, 'users', firebaseUser.uid), { role: 'ADMIN' }, { merge: true });
             }
             setUser(profile);
-            if (profile.role === 'ADMIN') {
-              seedProducts();
-            }
-          } else {
-            console.log('No user profile found, creating new one...');
-            const isAdminEmail = firebaseUser.email === 'betvdoc@gmail.com';
-            const newProfile: UserProfile = {
-              uid: firebaseUser.uid,
-              email: firebaseUser.email || '',
-              displayName: firebaseUser.displayName || '',
-              role: isAdminEmail ? 'ADMIN' : 'CLIENT',
-              loyaltyPoints: 0,
-              createdAt: new Date().toISOString(),
-            };
-            console.log('New profile:', newProfile);
-            await setDoc(doc(db, 'users', firebaseUser.uid), newProfile);
-            setUser(newProfile);
-            if (newProfile.role === 'ADMIN') {
-              seedProducts();
-            }
           }
         } catch (error) {
-          handleFirestoreError(error, OperationType.GET, path);
+          handleSupabaseError(error, 'AUTH', `users/${uid}`);
         }
       } else {
         setUser(null);
       }
       setAuthReady(true);
+      })();
     });
 
-    return () => unsubscribe();
-  }, [setUser, setAuthReady]);
+    // Load settings from DB
+    fetchSettings();
+
+    return () => subscription.unsubscribe();
+  }, [setUser, setAuthReady, fetchSettings]);
 
   return (
     <div className="min-h-screen flex flex-col">

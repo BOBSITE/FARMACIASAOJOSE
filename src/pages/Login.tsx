@@ -5,9 +5,7 @@ import * as z from 'zod';
 import { motion } from 'motion/react';
 import { Eye, EyeOff, Mail, Lock, User, CreditCard, ArrowRight, ShieldCheck } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { auth, db } from '../lib/firebase';
-import { doc, setDoc } from 'firebase/firestore';
+import { supabase } from '../lib/supabase';
 
 const loginSchema = z.object({
   email: z.string().email('E-mail inválido'),
@@ -28,15 +26,30 @@ export default function Login() {
     setLoading(true);
     setError('');
     try {
-      await signInWithEmailAndPassword(auth, data.email, data.password);
-      navigate('/');
+      const authPromise = supabase.auth.signInWithPassword({
+        email: data.email,
+        password: data.password,
+      });
+
+      // Race the authentication against a 10 second timeout in case GoTrueClient hangs natively
+      const timeoutPromise = new Promise<{ error: Error }>((_, reject) => 
+        setTimeout(() => reject(new Error('A conexão expirou. Tente novamente.')), 10000)
+      );
+
+      const { error: authError } = await Promise.race([authPromise, timeoutPromise]) as any;
+
+      if (authError) throw authError;
+
+      // Force a full location reload to completely clear any stale GoTrue state if normal navigate hangs
+      window.location.href = '/';
     } catch (err: any) {
       let message = 'E-mail ou senha incorretos.';
-      try {
-        const parsed = JSON.parse(err.message);
-        if (parsed.error) message = parsed.error;
-      } catch (e) {
-        // Not a JSON string or different error
+      if (err?.message) {
+        if (err.message === 'Email not confirmed') {
+          message = 'Por favor, verifique seu e-mail para confirmar o cadastro antes de entrar.';
+        } else {
+          message = err.message === 'Invalid login credentials' ? 'E-mail ou senha incorretos.' : err.message;
+        }
       }
       setError(message);
     } finally {
